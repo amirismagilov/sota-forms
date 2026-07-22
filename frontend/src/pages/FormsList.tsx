@@ -1,8 +1,8 @@
-import { PlusOutlined } from '@ant-design/icons';
-import { App, Button, Card, Empty, Modal, Form as AntForm, Input, Space, Table, Tag } from 'antd';
+import { DownloadOutlined, PlusOutlined, UploadOutlined } from '@ant-design/icons';
+import { App, Button, Card, Empty, Modal, Form as AntForm, Input, Space, Table, Tag, Upload } from 'antd';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { createForm, deleteForm, listForms } from '../api';
+import { createForm, deleteForm, exportForm, importForm, listForms } from '../api';
 import type { FormSchema } from '../types';
 
 export default function FormsList() {
@@ -27,10 +27,39 @@ export default function FormsList() {
     }
   }
 
+  async function doExport(pk: string, formId: string) {
+    const schema = await exportForm(pk);
+    const blob = new Blob([JSON.stringify(schema, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${formId}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  async function doImport(file: File) {
+    try {
+      const text = await file.text();
+      const created = await importForm(JSON.parse(text));
+      message.success(`Импортирована форма ${created.form_id}`);
+      nav(`/forms/${created.id}`);
+    } catch (e: any) {
+      message.error('Не удалось импортировать: ' + (e?.message || 'ошибка JSON'));
+    }
+    return false;
+  }
+
   return (
     <Card
       title="Формы"
-      extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => setOpen(true)}>Новая форма</Button>}
+      extra={
+        <Space>
+          <Upload accept=".json" showUploadList={false} beforeUpload={doImport}>
+            <Button icon={<UploadOutlined />}>Импорт JSON</Button>
+          </Upload>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setOpen(true)}>Новая форма</Button>
+        </Space>
+      }
     >
       {forms.length === 0 ? (
         <Empty description="Пока нет форм" />
@@ -50,6 +79,7 @@ export default function FormsList() {
               render: (_, r) => (
                 <Space>
                   <Button size="small" onClick={() => nav(`/forms/${r.id}`)}>Редактор</Button>
+                  <Button size="small" icon={<DownloadOutlined />} onClick={() => doExport(r.id!, r.form_id)}>JSON</Button>
                   <Button size="small" danger onClick={async () => { await deleteForm(r.id!); load(); }}>Удалить</Button>
                 </Space>
               ),

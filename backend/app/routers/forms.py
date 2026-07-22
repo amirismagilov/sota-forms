@@ -81,6 +81,33 @@ async def delete_form(form_pk: str, db: AsyncSession = Depends(get_db)):
     return {"ok": True}
 
 
+@router.post("/import", response_model=FormOut)
+async def import_form(body: dict, db: AsyncSession = Depends(get_db)):
+    """Create a form from an exported JSON schema (ФР Этап 4)."""
+    aid = await account_id(db)
+    form_id = body.get("form_id") or "imported_form"
+    # Avoid slug collision by suffixing.
+    base = form_id
+    n = 1
+    while (
+        await db.execute(select(Form).where(Form.account_id == aid, Form.form_id == form_id))
+    ).scalar_one_or_none():
+        n += 1
+        form_id = f"{base}_{n}"
+    f = Form(
+        account_id=aid,
+        form_id=form_id,
+        title=body.get("title") or "Импортированная форма",
+        grid_columns=int(body.get("grid_columns") or 2),
+        fields=body.get("fields") or [],
+        submit=body.get("submit") or {},
+    )
+    db.add(f)
+    await db.commit()
+    await db.refresh(f)
+    return _out(f)
+
+
 @router.get("/{form_pk}/export")
 async def export_form(form_pk: str, db: AsyncSession = Depends(get_db)):
     f = await db.get(Form, form_pk)

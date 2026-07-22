@@ -81,6 +81,17 @@ async def test_file_upload_and_retrieve(client):
     assert got.content == b"hello world"
 
 
+async def test_export_import_roundtrip(client):
+    export = await client.get("/api/forms/form_demo/export")
+    schema = export.json()
+    imported = await client.post("/api/forms/import", json=schema)
+    assert imported.status_code == 200
+    body = imported.json()
+    # Slug collides with the original, so it is suffixed, not overwritten.
+    assert body["form_id"] != schema["form_id"]
+    assert len(body["fields"]) == len(schema["fields"])
+
+
 async def test_manual_dictionary_options_endpoint(client):
     # order_form references dict_regions (manual) — options come straight back.
     r = await client.post("/api/public/dictionaries/dict_regions/options", json={"values": {}})
