@@ -1,4 +1,5 @@
 import {
+  AppstoreOutlined,
   ArrowDownOutlined,
   ArrowUpOutlined,
   CloudUploadOutlined,
@@ -8,6 +9,7 @@ import {
   HistoryOutlined,
   PlusOutlined,
   SaveOutlined,
+  UnorderedListOutlined,
 } from '@ant-design/icons';
 import {
   App,
@@ -36,6 +38,7 @@ import { extractRefs } from '../renderer/engine';
 import type { Dictionary, Field, FormSchema, FormVersionInfo } from '../types';
 import ThemedForm from '../widget/ThemedForm';
 import { FIELD_TYPE_GROUPS, MASK_PRESETS, OPERATORS } from './fieldTypes';
+import LayoutEditor, { ensureLayout } from './LayoutEditor';
 
 const LAYOUT_TYPES = ['section_header', 'divider', 'info_text'];
 const DICT_TYPES = ['dict_select', 'dict_radio', 'dict_checkbox'];
@@ -58,6 +61,7 @@ export default function FormEditor() {
   const [highlight, setHighlight] = useState<string | null>(null);
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [versions, setVersions] = useState<FormVersionInfo[]>([]);
+  const [leftView, setLeftView] = useState<'fields' | 'layout'>('fields');
 
   useEffect(() => {
     if (!pk) return;
@@ -181,24 +185,55 @@ export default function FormEditor() {
               />
             </span>
           </Space>
-          <div>
-            {form.fields.map((f, i) => (
-              <FieldRow
-                key={f.id}
-                field={f}
-                highlight={highlight === f.id}
-                onEdit={() => openEditor(i)}
-                onDelete={() => removeField(i)}
-                onUp={() => move(i, -1)}
-                onDown={() => move(i, 1)}
-                onBadgeClick={(target: string) => { setHighlight(target); setTimeout(() => setHighlight(null), 1500); }}
-                onCopyId={() => { navigator.clipboard?.writeText(f.id); message.success('ID скопирован: ' + f.id); }}
+
+          <Segmented
+            block
+            style={{ marginBottom: 12 }}
+            value={leftView}
+            onChange={(v) => {
+              if (v === 'layout') setForm({ ...form, fields: ensureLayout(form.fields, form.grid_columns) });
+              setLeftView(v as 'fields' | 'layout');
+            }}
+            options={[
+              { label: 'Поля', value: 'fields', icon: <UnorderedListOutlined /> },
+              { label: 'Раскладка (drag & resize)', value: 'layout', icon: <AppstoreOutlined /> },
+            ]}
+          />
+
+          {leftView === 'fields' ? (
+            <>
+              <div>
+                {form.fields.map((f, i) => (
+                  <FieldRow
+                    key={f.id}
+                    field={f}
+                    highlight={highlight === f.id}
+                    onEdit={() => openEditor(i)}
+                    onDelete={() => removeField(i)}
+                    onUp={() => move(i, -1)}
+                    onDown={() => move(i, 1)}
+                    onBadgeClick={(target: string) => { setHighlight(target); setTimeout(() => setHighlight(null), 1500); }}
+                    onCopyId={() => { navigator.clipboard?.writeText(f.id); message.success('ID скопирован: ' + f.id); }}
+                  />
+                ))}
+              </div>
+              <Button block icon={<PlusOutlined />} onClick={() => openEditor(null)} style={{ marginTop: 8 }}>
+                Добавить поле
+              </Button>
+            </>
+          ) : (
+            <>
+              <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+                Тяните блоки, чтобы менять порядок; тяните правый/нижний край, чтобы растягивать поле по сетке
+                ({form.grid_columns} {form.grid_columns === 1 ? 'колонка' : 'колонок'}). Раскладка сразу видна в предпросмотре справа.
+              </Typography.Paragraph>
+              <LayoutEditor
+                fields={form.fields}
+                cols={form.grid_columns}
+                onChange={(fields) => setForm({ ...form, fields })}
               />
-            ))}
-          </div>
-          <Button block icon={<PlusOutlined />} onClick={() => openEditor(null)} style={{ marginTop: 8 }}>
-            Добавить поле
-          </Button>
+            </>
+          )}
 
           <Card size="small" title="Отправка (webhook)" style={{ marginTop: 16 }}>
             <AntForm layout="vertical">

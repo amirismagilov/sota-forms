@@ -227,17 +227,35 @@ const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
   if (done) return <Alert type="success" showIcon message={done} style={{ margin: 8 }} />;
 
   const cols = schema.grid_columns || 2;
+  const useLayout = schema.fields.some((f) => f.layout);
+  // Compact original row indices so hidden fields don't leave holes, while
+  // keeping horizontal (x/w) placement exactly as designed.
+  const rowMap = new Map<number, number>();
+  if (useLayout) {
+    const ys = Array.from(new Set(schema.fields.filter(isVisible).map((f) => f.layout?.y ?? 0))).sort((a, b) => a - b);
+    ys.forEach((y, i) => rowMap.set(y, i + 1));
+  }
+
+  const maxWidth = useLayout ? 980 : 760;
 
   return (
-    <div style={{ maxWidth: 760, margin: '0 auto', padding: 8 }}>
+    <div style={{ maxWidth, margin: '0 auto', padding: 8 }}>
       {showTitle && <Title level={3}>{schema.title}</Title>}
-      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, 1fr)`, alignItems: 'start', gap: 16 }}>
         {schema.fields.map((f) => {
           if (!isVisible(f)) return null;
-          const span = Math.min(f.gridSpan || 1, cols);
-          const full = FULL_WIDTH.includes(f.type);
+          let style: React.CSSProperties;
+          if (useLayout && f.layout) {
+            const x = Math.min(Math.max(f.layout.x, 0), cols - 1);
+            const w = Math.min(f.layout.w || 1, cols - x);
+            style = { gridColumn: `${x + 1} / span ${w}`, gridRow: String(rowMap.get(f.layout.y ?? 0) ?? 'auto') };
+          } else {
+            const span = Math.min(f.gridSpan || 1, cols);
+            const full = FULL_WIDTH.includes(f.type);
+            style = { gridColumn: `span ${full ? cols : span}` };
+          }
           return (
-            <div key={f.id} style={{ gridColumn: `span ${full ? cols : span}` }}>
+            <div key={f.id} style={style}>
               {renderField(f)}
             </div>
           );

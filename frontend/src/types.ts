@@ -64,6 +64,8 @@ export interface Field {
   requiredIf?: Condition;
   rows?: number;
   fileValidation?: FileValidation;
+  // Visual grid placement (set by the layout editor). x/w in columns, y/h in rows.
+  layout?: { x: number; y: number; w: number; h: number };
 }
 
 export interface DictAttr {

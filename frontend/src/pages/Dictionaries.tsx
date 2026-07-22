@@ -108,7 +108,13 @@ export default function Dictionaries() {
   }
 
   return (
-    <Card title="Справочники" extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => openEditor(null)}>Новый</Button>}>
+    <Card
+      title="Справочники"
+      extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => openEditor(null)}>Новый</Button>}
+    >
+      <Typography.Paragraph type="secondary" style={{ marginTop: -8 }}>
+        Общий раздел аккаунта — справочники доступны во всех формах.
+      </Typography.Paragraph>
       <Table
         rowKey="id"
         dataSource={dicts}

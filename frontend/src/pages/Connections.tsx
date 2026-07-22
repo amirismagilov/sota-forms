@@ -1,6 +1,6 @@
 import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 import {
-  App, Button, Card, Col, Drawer, Form as AntForm, Input, InputNumber, Row, Select, Space, Table, Tag,
+  App, Button, Card, Col, Drawer, Form as AntForm, Input, InputNumber, Row, Select, Space, Table, Tag, Typography,
 } from 'antd';
 import { useEffect, useState } from 'react';
 import { createConnection, deleteConnection, listConnections, updateConnection } from '../api';
@@ -53,7 +53,13 @@ export default function Connections() {
   }
 
   return (
-    <Card title="Подключения" extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => openEditor(null)}>Новое</Button>}>
+    <Card
+      title="Подключения"
+      extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => openEditor(null)}>Новое</Button>}
+    >
+      <Typography.Paragraph type="secondary" style={{ marginTop: -8 }}>
+        Общий раздел аккаунта — интеграции и секреты доступны всем формам, секреты хранятся зашифрованными.
+      </Typography.Paragraph>
       <Table
         rowKey="id" dataSource={conns} pagination={false}
         columns={[
