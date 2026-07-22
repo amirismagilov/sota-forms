@@ -1,0 +1,109 @@
+from __future__ import annotations
+
+import uuid
+from datetime import UTC, datetime
+
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Mapped, mapped_column
+
+from .db import Base
+
+
+def _uuid(prefix: str) -> str:
+    return f"{prefix}_{uuid.uuid4().hex[:12]}"
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+class Account(Base):
+    __tablename__ = "accounts"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: _uuid("acc"))
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    design_tokens: Mapped[dict] = mapped_column(JSONB, default=dict)
+    webhook_default: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class Connection(Base):
+    __tablename__ = "connections"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: _uuid("conn"))
+    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id"), index=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    base_url: Mapped[str] = mapped_column(String, nullable=False)
+    auth_type: Mapped[str] = mapped_column(String, default="none")
+    # Secrets inside auth_config are stored encrypted (see crypto.py).
+    auth_config: Mapped[dict] = mapped_column(JSONB, default=dict)
+    whitelist: Mapped[list] = mapped_column(JSONB, default=list)
+    timeout: Mapped[int] = mapped_column(Integer, default=5000)
+    rate_limit: Mapped[int] = mapped_column(Integer, default=60)
+    cache: Mapped[str] = mapped_column(String, default="none")
+    env: Mapped[str] = mapped_column(String, default="prod")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class Dictionary(Base):
+    __tablename__ = "dictionaries"
+    __table_args__ = (UniqueConstraint("account_id", "code", name="uq_dict_account_code"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: _uuid("dict"))
+    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id"), index=True)
+    code: Mapped[str] = mapped_column(String, nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    type: Mapped[str] = mapped_column(String, default="manual")  # manual | api
+    dependencies: Mapped[list] = mapped_column(JSONB, default=list)
+    attrs: Mapped[list] = mapped_column(JSONB, default=list)
+    items: Mapped[list] = mapped_column(JSONB, default=list)
+    api_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class Form(Base):
+    __tablename__ = "forms"
+    __table_args__ = (UniqueConstraint("account_id", "form_id", name="uq_form_account_slug"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: _uuid("form"))
+    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id"), index=True)
+    form_id: Mapped[str] = mapped_column(String, nullable=False, index=True)  # public slug
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    grid_columns: Mapped[int] = mapped_column(Integer, default=2)
+    fields: Mapped[list] = mapped_column(JSONB, default=list)
+    submit: Mapped[dict] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+class Submission(Base):
+    __tablename__ = "submissions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: _uuid("sub"))
+    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id"), index=True)
+    form_id: Mapped[str] = mapped_column(String, index=True)
+    data: Mapped[dict] = mapped_column(JSONB, default=dict)
+    webhook_status: Mapped[str] = mapped_column(String, default="pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class WebhookDelivery(Base):
+    """Outbox row driving the execute-worker (доска доставок)."""
+
+    __tablename__ = "webhook_deliveries"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: _uuid("whd"))
+    submission_id: Mapped[str] = mapped_column(ForeignKey("submissions.id"), index=True)
+    form_id: Mapped[str] = mapped_column(String, index=True)
+    url: Mapped[str] = mapped_column(String, nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, default=dict)
+    status: Mapped[str] = mapped_column(String, default="pending", index=True)  # pending|delivered|failed|dead
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=5)
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
+    last_status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
