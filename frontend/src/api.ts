@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Connection, Dictionary, FormSchema, PublicForm } from './types';
+import type { Connection, Dictionary, FormListResult, FormSchema, FormVersionInfo, PublicForm } from './types';
 
 const api = axios.create({ baseURL: '/api' });
 
@@ -35,9 +35,21 @@ export const register = (email: string, password: string, account_name?: string)
   api.post<{ token: string; user: AuthUser }>('/auth/register', { email, password, account_name }).then((r) => r.data);
 export const me = () => api.get<AuthUser>('/auth/me').then((r) => r.data);
 
-// ---- Forms ----
-export const listForms = () => api.get<FormSchema[]>('/forms').then((r) => r.data);
+// ---- Forms (registry) ----
+export interface FormQuery { q?: string; status?: string; limit?: number; offset?: number; sort?: string }
+export const listForms = (params: FormQuery = {}) =>
+  api.get<FormListResult>('/forms', { params }).then((r) => r.data);
 export const getForm = (pk: string) => api.get<FormSchema>(`/forms/${pk}`).then((r) => r.data);
+export const publishForm = (pk: string, note?: string) =>
+  api.post<FormSchema>(`/forms/${pk}/publish`, { note }).then((r) => r.data);
+export const setFormStatus = (pk: string, status: string) =>
+  api.post<FormSchema>(`/forms/${pk}/status`, { status }).then((r) => r.data);
+export const listVersions = (pk: string) =>
+  api.get<FormVersionInfo[]>(`/forms/${pk}/versions`).then((r) => r.data);
+export const getVersion = (pk: string, v: number) =>
+  api.get(`/forms/${pk}/versions/${v}`).then((r) => r.data);
+export const rollbackForm = (pk: string, v: number) =>
+  api.post<FormSchema>(`/forms/${pk}/rollback/${v}`).then((r) => r.data);
 export const createForm = (body: Partial<FormSchema>) =>
   api.post<FormSchema>('/forms', body).then((r) => r.data);
 export const updateForm = (pk: string, body: Partial<FormSchema>) =>

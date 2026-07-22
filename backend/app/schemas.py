@@ -58,6 +58,9 @@ class FormIn(BaseModel):
 class FormOut(FormIn):
     id: str
     version: int
+    status: str = "draft"
+    published_version: int | None = None
+    has_draft_changes: bool = True
 
 
 # ---- Public ----

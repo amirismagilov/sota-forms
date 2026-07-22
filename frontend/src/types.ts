@@ -102,6 +102,27 @@ export interface FormSchema {
     successMessage?: string;
     redirectUrl?: string | null;
   };
+  status?: 'draft' | 'published' | 'archived';
+  published_version?: number | null;
+  has_draft_changes?: boolean;
+  submission_count?: number;
+  updated_at?: string | null;
+}
+
+export interface FormVersionInfo {
+  version: number;
+  title: string;
+  note?: string | null;
+  field_count: number;
+  is_published: boolean;
+  created_at: string;
+}
+
+export interface FormListResult {
+  items: FormSchema[];
+  total: number;
+  limit: number;
+  offset: number;
 }
 
 export interface PublicForm extends FormSchema {

@@ -23,7 +23,12 @@ export default function Embed() {
   const [color, setColor] = useState<string | undefined>();
   const [received, setReceived] = useState<any[]>([]);
 
-  useEffect(() => { listForms().then((f) => { setForms(f); if (f[0]) setFormId(f[0].form_id); }).catch(() => {}); }, []);
+  useEffect(() => {
+    listForms({ status: 'published', limit: 200 }).then((r) => {
+      setForms(r.items);
+      if (r.items[0]) setFormId(r.items[0].form_id);
+    }).catch(() => {});
+  }, []);
   const loadReceived = () => fetch('/api/mock/webhook/received').then((r) => r.json()).then(setReceived).catch(() => {});
   useEffect(() => { loadReceived(); const t = setInterval(loadReceived, 3000); return () => clearInterval(t); }, []);
 

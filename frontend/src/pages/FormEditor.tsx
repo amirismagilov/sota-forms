@@ -1,9 +1,11 @@
 import {
   ArrowDownOutlined,
   ArrowUpOutlined,
+  CloudUploadOutlined,
   CopyOutlined,
   DeleteOutlined,
   EditOutlined,
+  HistoryOutlined,
   PlusOutlined,
   SaveOutlined,
 } from '@ant-design/icons';
@@ -16,6 +18,7 @@ import {
   Form as AntForm,
   Input,
   InputNumber,
+  List,
   Row,
   Segmented,
   Select,
@@ -26,9 +29,11 @@ import {
 } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { getDictOptions, getForm, getTheme, listDictionaries, updateForm, uploadFile } from '../api';
+import {
+  getDictOptions, getForm, getTheme, listDictionaries, listVersions, publishForm, rollbackForm, updateForm, uploadFile,
+} from '../api';
 import { extractRefs } from '../renderer/engine';
-import type { Dictionary, Field, FormSchema } from '../types';
+import type { Dictionary, Field, FormSchema, FormVersionInfo } from '../types';
 import ThemedForm from '../widget/ThemedForm';
 import { FIELD_TYPE_GROUPS, MASK_PRESETS, OPERATORS } from './fieldTypes';
 
@@ -51,6 +56,8 @@ export default function FormEditor() {
   const [editIndex, setEditIndex] = useState<number | null>(null);
   const [fieldForm] = AntForm.useForm();
   const [highlight, setHighlight] = useState<string | null>(null);
+  const [versionsOpen, setVersionsOpen] = useState(false);
+  const [versions, setVersions] = useState<FormVersionInfo[]>([]);
 
   useEffect(() => {
     if (!pk) return;
@@ -110,10 +117,37 @@ export default function FormEditor() {
         submit: form!.submit,
       });
       setForm(saved);
-      message.success('Сохранено (v' + saved.version + ')');
+      message.success('Черновик сохранён');
     } catch (e: any) {
       message.error(e?.response?.data?.detail || 'Ошибка сохранения');
     }
+  }
+
+  async function publish() {
+    try {
+      // Persist current draft first, then publish an immutable snapshot.
+      await updateForm(pk!, {
+        form_id: form!.form_id, title: form!.title, grid_columns: form!.grid_columns,
+        fields: form!.fields, submit: form!.submit,
+      });
+      const pub = await publishForm(pk!);
+      setForm(pub);
+      message.success('Опубликовано: v' + pub.version);
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || 'Ошибка публикации');
+    }
+  }
+
+  async function openVersions() {
+    setVersionsOpen(true);
+    setVersions(await listVersions(pk!).catch(() => []));
+  }
+
+  async function doRollback(v: number) {
+    const restored = await rollbackForm(pk!, v);
+    setForm(restored);
+    setVersionsOpen(false);
+    message.success(`Версия v${v} восстановлена в черновик — опубликуйте, чтобы сделать её живой`);
   }
 
   return (
@@ -121,11 +155,22 @@ export default function FormEditor() {
       <Col span={13}>
         <Card
           title={<Input variant="borderless" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} style={{ fontWeight: 600, fontSize: 16 }} />}
-          extra={<Button type="primary" icon={<SaveOutlined />} onClick={save}>Сохранить</Button>}
+          extra={
+            <Space>
+              <Button icon={<HistoryOutlined />} onClick={openVersions}>Версии</Button>
+              <Button icon={<SaveOutlined />} onClick={save}>Сохранить черновик</Button>
+              <Button type="primary" icon={<CloudUploadOutlined />} onClick={publish}>Опубликовать</Button>
+            </Space>
+          }
           styles={{ body: { maxHeight: '72vh', overflow: 'auto' } }}
         >
           <Space wrap style={{ marginBottom: 12 }}>
             <span>form-id: <Tag color="blue">{form.form_id}</Tag></span>
+            <Tag color={form.status === 'published' ? 'green' : form.status === 'archived' ? 'red' : 'default'}>
+              {form.status === 'published' ? `Опубликована v${form.published_version}` : form.status === 'archived' ? 'В архиве' : 'Черновик'}
+            </Tag>
+            {form.has_draft_changes && form.published_version
+              ? <Tag color="orange">неопубликованные изменения</Tag> : null}
             <span>Колонок:
               <Segmented
                 size="small"
@@ -309,6 +354,34 @@ export default function FormEditor() {
             </>
           )}
         </AntForm>
+      </Drawer>
+
+      <Drawer title="История версий" open={versionsOpen} width={420} onClose={() => setVersionsOpen(false)}>
+        <Typography.Paragraph type="secondary">
+          Каждая публикация создаёт неизменяемый снимок схемы. Виджет отдаёт опубликованную версию,
+          а не черновик. Откат восстанавливает выбранную версию в черновик — опубликуйте её, чтобы сделать живой.
+        </Typography.Paragraph>
+        <List
+          dataSource={versions}
+          locale={{ emptyText: 'Пока нет опубликованных версий' }}
+          renderItem={(v) => (
+            <List.Item
+              actions={[
+                <Button key="rb" size="small" onClick={() => doRollback(v.version)}>Откатить</Button>,
+              ]}
+            >
+              <List.Item.Meta
+                title={<Space>v{v.version}{v.is_published && <Tag color="green">живая</Tag>}</Space>}
+                description={
+                  <span style={{ fontSize: 12 }}>
+                    {v.title} · {v.field_count} полей · {new Date(v.created_at).toLocaleString('ru-RU')}
+                    {v.note ? ` · ${v.note}` : ''}
+                  </span>
+                }
+              />
+            </List.Item>
+          )}
+        />
       </Drawer>
     </Row>
   );

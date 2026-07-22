@@ -8,7 +8,7 @@ from ..crypto import sign_payload
 from ..db import get_db
 from ..deps import get_account_by_id
 from ..dict_resolver import resolve_api_dictionary
-from ..models import Dictionary, Form, Submission, WebhookDelivery
+from ..models import Dictionary, Form, FormVersion, Submission, WebhookDelivery
 from ..ratelimit import check_rate_limit
 from ..schemas import PublicFormOut, SubmitIn
 
@@ -35,9 +35,23 @@ async def public_form(form_id: str, db: AsyncSession = Depends(get_db)):
     ).scalar_one_or_none()
     if not f:
         raise HTTPException(404, "form not found")
+    # The widget serves the PUBLISHED snapshot, never the live draft, and only
+    # while the form is published (archived/unpublished forms are hidden).
+    if f.status == "archived":
+        raise HTTPException(404, "form not available")
+    if not f.published_version:
+        raise HTTPException(404, "form not published")
+    snap = (
+        await db.execute(
+            select(FormVersion).where(FormVersion.form_pk == f.id, FormVersion.version == f.published_version)
+        )
+    ).scalar_one_or_none()
+    if not snap:
+        raise HTTPException(404, "published version missing")
+
     acc = await get_account_by_id(db, f.account_id)
 
-    dict_ids = _referenced_dict_ids(f.fields)
+    dict_ids = _referenced_dict_ids(snap.fields)
     dicts = []
     if dict_ids:
         rows = (
@@ -59,10 +73,10 @@ async def public_form(form_id: str, db: AsyncSession = Depends(get_db)):
 
     return PublicFormOut(
         form_id=f.form_id,
-        title=f.title,
-        grid_columns=f.grid_columns,
-        fields=f.fields,
-        submit=f.submit,
+        title=snap.title,
+        grid_columns=snap.grid_columns,
+        fields=snap.fields,
+        submit=snap.submit,
         design_tokens=acc.design_tokens,
         dictionaries=dicts,
     )
@@ -99,6 +113,8 @@ async def submit_form(form_id: str, body: SubmitIn, db: AsyncSession = Depends(g
     ).scalar_one_or_none()
     if not f:
         raise HTTPException(404, "form not found")
+    if not f.published_version or f.status == "archived":
+        raise HTTPException(404, "form not available")
     acc = await get_account_by_id(db, f.account_id)
 
     sub = Submission(account_id=acc.id, form_id=form_id, data=body.data, webhook_status="pending")

@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -82,12 +82,36 @@ class Form(Base):
     # unambiguous across tenants.
     form_id: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
     title: Mapped[str] = mapped_column(String, nullable=False)
-    version: Mapped[int] = mapped_column(Integer, default=1)
+    # fields/submit hold the working DRAFT copy edited in the constructor.
     grid_columns: Mapped[int] = mapped_column(Integer, default=2)
     fields: Mapped[list] = mapped_column(JSONB, default=list)
     submit: Mapped[dict] = mapped_column(JSONB, default=dict)
+    # Lifecycle: draft | published | archived. The widget serves the published
+    # snapshot (published_version), never the live draft.
+    status: Mapped[str] = mapped_column(String, default="draft", index=True)
+    version: Mapped[int] = mapped_column(Integer, default=0)  # latest published version number
+    published_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    has_draft_changes: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+class FormVersion(Base):
+    """Immutable published snapshot of a form's schema (history + rollback)."""
+
+    __tablename__ = "form_versions"
+    __table_args__ = (UniqueConstraint("form_pk", "version", name="uq_formversion"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: _uuid("fver"))
+    form_pk: Mapped[str] = mapped_column(ForeignKey("forms.id", ondelete="CASCADE"), index=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    grid_columns: Mapped[int] = mapped_column(Integer, default=2)
+    fields: Mapped[list] = mapped_column(JSONB, default=list)
+    submit: Mapped[dict] = mapped_column(JSONB, default=dict)
+    note: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
 class Submission(Base):

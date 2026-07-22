@@ -8,7 +8,7 @@ from .auth import hash_password
 from .config import get_settings
 from .db import SessionLocal
 from .deps import DEMO_TOKENS
-from .models import Account, Connection, Dictionary, Form, User
+from .models import Account, Connection, Dictionary, Form, FormVersion, User
 
 DEMO_ACCOUNT_ID = "acc_demo"
 DEMO_EMAIL = "demo@sota.forms"
@@ -175,6 +175,11 @@ async def seed_if_empty() -> None:
             {"id": "i_note", "type": "info_text", "label": "После отправки данные уходят на webhook клиента."},
         ]
 
+        submit_cfg = {
+            "webhookUrl": MOCK_WEBHOOK,
+            "successMessage": "Спасибо! Заказ принят.",
+            "redirectUrl": None,
+        }
         form = Form(
             id="form_demo",
             account_id=DEMO_ACCOUNT_ID,
@@ -182,12 +187,17 @@ async def seed_if_empty() -> None:
             title="Оформление заказа",
             grid_columns=2,
             fields=fields,
-            submit={
-                "webhookUrl": MOCK_WEBHOOK,
-                "successMessage": "Спасибо! Заказ принят.",
-                "redirectUrl": None,
-            },
+            submit=submit_cfg,
+            status="published",
+            version=1,
+            published_version=1,
+            has_draft_changes=False,
         )
         db.add(form)
+        # Publish version 1 so the widget can render it immediately.
+        db.add(FormVersion(
+            form_pk="form_demo", version=1, title="Оформление заказа",
+            grid_columns=2, fields=fields, submit=submit_cfg, note="Первая публикация",
+        ))
         await db.commit()
-        print("[seed] demo account, dictionaries and order_form created", flush=True)
+        print("[seed] demo account, dictionaries and published order_form created", flush=True)

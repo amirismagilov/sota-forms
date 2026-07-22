@@ -54,14 +54,14 @@ async def test_accounts_are_isolated(client):
 
     # B cannot see A's form in its list…
     b_list = await client.get("/api/forms", headers=hb)
-    assert all(f["id"] != pk for f in b_list.json())
+    assert all(f["id"] != pk for f in b_list.json()["items"])
     # …nor read, update, or delete it.
     assert (await client.get(f"/api/forms/{pk}", headers=hb)).status_code == 404
     assert (await client.put(f"/api/forms/{pk}", headers=hb, json={"form_id": "x", "title": "x", "fields": []})).status_code == 404
 
     # A still sees it.
     a_list = await client.get("/api/forms", headers=ha)
-    assert any(f["id"] == pk for f in a_list.json())
+    assert any(f["id"] == pk for f in a_list.json()["items"])
 
 
 async def test_public_form_needs_no_auth(client):

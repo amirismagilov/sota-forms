@@ -106,13 +106,16 @@ async def test_form_crud_roundtrip(client):
         json={"form_id": "contact", "title": "Contact", "fields": [{"id": "f1", "type": "text", "label": "Name"}]},
     )
     assert created.status_code == 200
-    pk = created.json()["id"]
+    body = created.json()
+    pk = body["id"]
+    assert body["status"] == "draft" and body["version"] == 0 and body["published_version"] is None
 
     updated = await client.put(
         f"/api/forms/{pk}",
         json={"form_id": "contact", "title": "Contact v2", "fields": []},
     )
-    assert updated.json()["version"] == 2
+    assert updated.json()["version"] == 0  # saving a draft does not publish
+    assert updated.json()["has_draft_changes"] is True
 
     export = await client.get(f"/api/forms/{pk}/export")
     assert export.json()["title"] == "Contact v2"
@@ -120,3 +123,46 @@ async def test_form_crud_roundtrip(client):
     await client.delete(f"/api/forms/{pk}")
     gone = await client.get(f"/api/forms/{pk}")
     assert gone.status_code == 404
+
+
+async def test_publish_versioning_and_rollback(client):
+    created = await client.post(
+        "/api/forms",
+        json={"form_id": "verform", "title": "V1", "fields": [{"id": "a", "type": "text", "label": "A"}]},
+    )
+    pk = created.json()["id"]
+
+    # Not published yet → widget cannot render it.
+    assert (await client.get("/api/public/forms/verform")).status_code == 404
+
+    pub1 = await client.post(f"/api/forms/{pk}/publish", json={"note": "first"})
+    assert pub1.json()["version"] == 1 and pub1.json()["status"] == "published"
+    assert (await client.get("/api/public/forms/verform")).json()["title"] == "V1"
+
+    # Edit the draft and publish v2.
+    await client.put(f"/api/forms/{pk}", json={"form_id": "verform", "title": "V2", "fields": []})
+    # Public still serves v1 until re-published.
+    assert (await client.get("/api/public/forms/verform")).json()["title"] == "V1"
+    pub2 = await client.post(f"/api/forms/{pk}/publish", json={"note": "second"})
+    assert pub2.json()["version"] == 2
+    assert (await client.get("/api/public/forms/verform")).json()["title"] == "V2"
+
+    versions = await client.get(f"/api/forms/{pk}/versions")
+    assert [v["version"] for v in versions.json()] == [2, 1]
+
+    # Rollback restores v1 into the draft; publishing it becomes v3.
+    rb = await client.post(f"/api/forms/{pk}/rollback/1")
+    assert rb.json()["title"] == "V1" and rb.json()["has_draft_changes"] is True
+    pub3 = await client.post(f"/api/forms/{pk}/publish", json={"note": "rollback"})
+    assert pub3.json()["version"] == 3
+    assert (await client.get("/api/public/forms/verform")).json()["title"] == "V1"
+
+
+async def test_registry_search_and_counts(client):
+    r = await client.get("/api/forms", params={"q": "order"})
+    body = r.json()
+    assert "items" in body and "total" in body
+    order = next((f for f in body["items"] if f["form_id"] == "order_form"), None)
+    assert order is not None
+    assert order["status"] == "published"
+    assert "submission_count" in order
