@@ -4,8 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..auth import require_account
 from ..db import get_db
-from ..deps import account_id
 from ..models import Form
 from ..schemas import FormIn, FormOut
 
@@ -24,30 +24,34 @@ def _out(f: Form) -> FormOut:
     )
 
 
+async def _owned(db: AsyncSession, form_pk: str, aid: str) -> Form:
+    f = await db.get(Form, form_pk)
+    if not f or f.account_id != aid:
+        raise HTTPException(404, "form not found")
+    return f
+
+
+async def _slug_taken(db: AsyncSession, form_id: str) -> bool:
+    # form_id is a global embed key, so uniqueness is checked globally.
+    return (
+        await db.execute(select(Form).where(Form.form_id == form_id))
+    ).scalar_one_or_none() is not None
+
+
 @router.get("", response_model=list[FormOut])
-async def list_forms(db: AsyncSession = Depends(get_db)):
-    aid = await account_id(db)
+async def list_forms(db: AsyncSession = Depends(get_db), aid: str = Depends(require_account)):
     rows = (await db.execute(select(Form).where(Form.account_id == aid))).scalars().all()
     return [_out(f) for f in rows]
 
 
 @router.get("/{form_pk}", response_model=FormOut)
-async def get_form(form_pk: str, db: AsyncSession = Depends(get_db)):
-    f = await db.get(Form, form_pk)
-    if not f:
-        raise HTTPException(404, "form not found")
-    return _out(f)
+async def get_form(form_pk: str, db: AsyncSession = Depends(get_db), aid: str = Depends(require_account)):
+    return _out(await _owned(db, form_pk, aid))
 
 
 @router.post("", response_model=FormOut)
-async def create_form(body: FormIn, db: AsyncSession = Depends(get_db)):
-    aid = await account_id(db)
-    exists = (
-        await db.execute(
-            select(Form).where(Form.account_id == aid, Form.form_id == body.form_id)
-        )
-    ).scalar_one_or_none()
-    if exists:
+async def create_form(body: FormIn, db: AsyncSession = Depends(get_db), aid: str = Depends(require_account)):
+    if await _slug_taken(db, body.form_id):
         raise HTTPException(409, f"form_id '{body.form_id}' already exists")
     f = Form(account_id=aid, **body.model_dump())
     db.add(f)
@@ -57,10 +61,10 @@ async def create_form(body: FormIn, db: AsyncSession = Depends(get_db)):
 
 
 @router.put("/{form_pk}", response_model=FormOut)
-async def update_form(form_pk: str, body: FormIn, db: AsyncSession = Depends(get_db)):
-    f = await db.get(Form, form_pk)
-    if not f:
-        raise HTTPException(404, "form not found")
+async def update_form(form_pk: str, body: FormIn, db: AsyncSession = Depends(get_db), aid: str = Depends(require_account)):
+    f = await _owned(db, form_pk, aid)
+    if body.form_id != f.form_id and await _slug_taken(db, body.form_id):
+        raise HTTPException(409, f"form_id '{body.form_id}' already exists")
     f.form_id = body.form_id
     f.title = body.title
     f.grid_columns = body.grid_columns
@@ -73,25 +77,21 @@ async def update_form(form_pk: str, body: FormIn, db: AsyncSession = Depends(get
 
 
 @router.delete("/{form_pk}")
-async def delete_form(form_pk: str, db: AsyncSession = Depends(get_db)):
+async def delete_form(form_pk: str, db: AsyncSession = Depends(get_db), aid: str = Depends(require_account)):
     f = await db.get(Form, form_pk)
-    if f:
+    if f and f.account_id == aid:
         await db.delete(f)
         await db.commit()
     return {"ok": True}
 
 
 @router.post("/import", response_model=FormOut)
-async def import_form(body: dict, db: AsyncSession = Depends(get_db)):
+async def import_form(body: dict, db: AsyncSession = Depends(get_db), aid: str = Depends(require_account)):
     """Create a form from an exported JSON schema (ФР Этап 4)."""
-    aid = await account_id(db)
-    form_id = body.get("form_id") or "imported_form"
-    # Avoid slug collision by suffixing.
-    base = form_id
+    base = body.get("form_id") or "imported_form"
+    form_id = base
     n = 1
-    while (
-        await db.execute(select(Form).where(Form.account_id == aid, Form.form_id == form_id))
-    ).scalar_one_or_none():
+    while await _slug_taken(db, form_id):
         n += 1
         form_id = f"{base}_{n}"
     f = Form(
@@ -109,10 +109,8 @@ async def import_form(body: dict, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/{form_pk}/export")
-async def export_form(form_pk: str, db: AsyncSession = Depends(get_db)):
-    f = await db.get(Form, form_pk)
-    if not f:
-        raise HTTPException(404, "form not found")
+async def export_form(form_pk: str, db: AsyncSession = Depends(get_db), aid: str = Depends(require_account)):
+    f = await _owned(db, form_pk, aid)
     return {
         "form_id": f.form_id,
         "title": f.title,

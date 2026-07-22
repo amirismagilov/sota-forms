@@ -52,6 +52,10 @@ async def client():
 
     transport = ASGITransport(app=_get_app())
     async with AsyncClient(transport=transport, base_url="http://test") as c:
+        # Authenticate as the seeded demo owner; admin endpoints require it.
+        login = await c.post("/api/auth/login", json={"email": "demo@sota.forms", "password": "demo12345"})
+        token = login.json()["token"]
+        c.headers["Authorization"] = f"Bearer {token}"
         yield c
     await engine.dispose()
 

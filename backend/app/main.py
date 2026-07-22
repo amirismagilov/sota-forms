@@ -8,7 +8,18 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
 from .db import init_db
-from .routers import account, connections, dictionaries, files, forms, mock, proxy, public, submissions
+from .routers import (
+    account,
+    auth,
+    connections,
+    dictionaries,
+    files,
+    forms,
+    mock,
+    proxy,
+    public,
+    submissions,
+)
 
 
 @asynccontextmanager
@@ -39,7 +50,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-for r in (connections, dictionaries, forms, account, submissions, public, proxy, mock, files):
+for r in (auth, connections, dictionaries, forms, account, submissions, public, proxy, mock, files):
     app.include_router(r.router)
 
 

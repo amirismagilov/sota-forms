@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from sqlalchemy import select
 
+from .auth import hash_password
 from .config import get_settings
 from .db import SessionLocal
 from .deps import DEMO_TOKENS
-from .models import Account, Connection, Dictionary, Form
+from .models import Account, Connection, Dictionary, Form, User
 
 DEMO_ACCOUNT_ID = "acc_demo"
+DEMO_EMAIL = "demo@sota.forms"
+DEMO_PASSWORD = "demo12345"
 MOCK_WEBHOOK = get_settings().mock_webhook_url
 MOCK_EXT_BASE = get_settings().mock_ext_base
 
@@ -26,6 +29,16 @@ async def seed_if_empty() -> None:
             )
             db.add(acc)
             await db.flush()
+
+        # Demo login owning the demo account.
+        demo_user = (await db.execute(select(User).where(User.email == DEMO_EMAIL))).scalar_one_or_none()
+        if demo_user is None:
+            db.add(User(
+                email=DEMO_EMAIL,
+                password_hash=hash_password(DEMO_PASSWORD),
+                account_id=DEMO_ACCOUNT_ID,
+                role="owner",
+            ))
 
         existing_forms = (
             await db.execute(select(Form).where(Form.account_id == DEMO_ACCOUNT_ID))

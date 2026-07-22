@@ -3,6 +3,38 @@ import type { Connection, Dictionary, FormSchema, PublicForm } from './types';
 
 const api = axios.create({ baseURL: '/api' });
 
+export const TOKEN_KEY = 'sota_token';
+export const getToken = () => localStorage.getItem(TOKEN_KEY);
+export const setToken = (t: string) => localStorage.setItem(TOKEN_KEY, t);
+export const clearToken = () => localStorage.removeItem(TOKEN_KEY);
+
+// Attach bearer token to every admin request.
+api.interceptors.request.use((cfg) => {
+  const t = getToken();
+  if (t) cfg.headers.Authorization = `Bearer ${t}`;
+  return cfg;
+});
+
+// On auth failure, drop the token and let the app fall back to the login screen.
+api.interceptors.response.use(
+  (r) => r,
+  (err) => {
+    if (err?.response?.status === 401 && getToken()) {
+      clearToken();
+      window.dispatchEvent(new Event('sota:unauthorized'));
+    }
+    return Promise.reject(err);
+  },
+);
+
+// ---- Auth ----
+export interface AuthUser { id: string; email: string; role: string; account_id: string }
+export const login = (email: string, password: string) =>
+  api.post<{ token: string; user: AuthUser }>('/auth/login', { email, password }).then((r) => r.data);
+export const register = (email: string, password: string, account_name?: string) =>
+  api.post<{ token: string; user: AuthUser }>('/auth/register', { email, password, account_name }).then((r) => r.data);
+export const me = () => api.get<AuthUser>('/auth/me').then((r) => r.data);
+
 // ---- Forms ----
 export const listForms = () => api.get<FormSchema[]>('/forms').then((r) => r.data);
 export const getForm = (pk: string) => api.get<FormSchema>(`/forms/${pk}`).then((r) => r.data);

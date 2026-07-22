@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..crypto import sign_payload
 from ..db import get_db
-from ..deps import get_account
+from ..deps import get_account_by_id
 from ..dict_resolver import resolve_api_dictionary
 from ..models import Dictionary, Form, Submission, WebhookDelivery
 from ..ratelimit import check_rate_limit
@@ -25,15 +25,17 @@ def _referenced_dict_ids(fields: list[dict]) -> set[str]:
 
 @router.get("/forms/{form_id}", response_model=PublicFormOut)
 async def public_form(form_id: str, db: AsyncSession = Depends(get_db)):
-    """Schema + design tokens + referenced dictionaries for the widget (ВТ-3)."""
-    acc = await get_account(db)
+    """Schema + design tokens + referenced dictionaries for the widget (ВТ-3).
+
+    The form_id is a global embed key, so it resolves the owning account —
+    no auth needed for public rendering.
+    """
     f = (
-        await db.execute(
-            select(Form).where(Form.account_id == acc.id, Form.form_id == form_id)
-        )
+        await db.execute(select(Form).where(Form.form_id == form_id))
     ).scalar_one_or_none()
     if not f:
         raise HTTPException(404, "form not found")
+    acc = await get_account_by_id(db, f.account_id)
 
     dict_ids = _referenced_dict_ids(f.fields)
     dicts = []
@@ -92,14 +94,12 @@ async def submit_form(form_id: str, body: SubmitIn, db: AsyncSession = Depends(g
     if not await check_rate_limit(f"submit:{form_id}", limit=120):
         raise HTTPException(429, "rate limit exceeded")
 
-    acc = await get_account(db)
     f = (
-        await db.execute(
-            select(Form).where(Form.account_id == acc.id, Form.form_id == form_id)
-        )
+        await db.execute(select(Form).where(Form.form_id == form_id))
     ).scalar_one_or_none()
     if not f:
         raise HTTPException(404, "form not found")
+    acc = await get_account_by_id(db, f.account_id)
 
     sub = Submission(account_id=acc.id, form_id=form_id, data=body.data, webhook_status="pending")
     db.add(sub)

@@ -39,3 +39,12 @@ async def get_account(db: AsyncSession) -> Account:
 
 async def account_id(db: AsyncSession) -> str:
     return (await get_account(db)).id
+
+
+async def get_account_by_id(db: AsyncSession, acc_id: str) -> Account:
+    acc = await db.get(Account, acc_id)
+    if acc is None:
+        from fastapi import HTTPException
+
+        raise HTTPException(404, "account not found")
+    return acc

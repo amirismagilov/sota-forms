@@ -4,11 +4,13 @@ import {
   DatabaseOutlined,
   FormOutlined,
   InboxOutlined,
+  LogoutOutlined,
   SendOutlined,
   CodeOutlined,
 } from '@ant-design/icons';
-import { Layout, Menu, Typography } from 'antd';
+import { Button, Dropdown, Layout, Menu, Space, Typography } from 'antd';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import type { AuthUser } from './api';
 import Connections from './pages/Connections';
 import Deliveries from './pages/Deliveries';
 import Dictionaries from './pages/Dictionaries';
@@ -30,7 +32,7 @@ const items = [
   { key: '/embed', icon: <CodeOutlined />, label: 'Встраивание' },
 ];
 
-export default function App() {
+export default function App({ user, onLogout }: { user: AuthUser; onLogout: () => void }) {
   const nav = useNavigate();
   const loc = useLocation();
   const selected = '/' + (loc.pathname.split('/')[1] || 'forms');
@@ -44,8 +46,15 @@ export default function App() {
         <Menu mode="inline" selectedKeys={[selected]} items={items} onClick={(e) => nav(e.key)} />
       </Sider>
       <Layout>
-        <Header style={{ background: '#fff', borderBottom: '1px solid #f0f0f0', paddingInline: 24 }}>
-          <Typography.Text strong>Универсальный конструктор форм · демо</Typography.Text>
+        <Header style={{ background: '#fff', borderBottom: '1px solid #f0f0f0', paddingInline: 24, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Typography.Text strong>Универсальный конструктор форм</Typography.Text>
+          <Dropdown menu={{ items: [{ key: 'out', icon: <LogoutOutlined />, label: 'Выйти', onClick: onLogout }] }}>
+            <Button type="text">
+              <Space>
+                <span style={{ color: '#666' }}>{user.email}</span>
+              </Space>
+            </Button>
+          </Dropdown>
         </Header>
         <Content style={{ padding: 24, overflow: 'auto' }}>
           <Routes>

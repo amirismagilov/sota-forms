@@ -4,9 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..auth import require_account
 from ..crypto import encrypt_auth_config, redact_auth_config
 from ..db import get_db
-from ..deps import account_id
 from ..models import Connection
 from ..schemas import ConnectionIn, ConnectionOut
 
@@ -29,15 +29,13 @@ def _out(c: Connection) -> ConnectionOut:
 
 
 @router.get("", response_model=list[ConnectionOut])
-async def list_connections(db: AsyncSession = Depends(get_db)):
-    aid = await account_id(db)
+async def list_connections(db: AsyncSession = Depends(get_db), aid: str = Depends(require_account)):
     rows = (await db.execute(select(Connection).where(Connection.account_id == aid))).scalars().all()
     return [_out(c) for c in rows]
 
 
 @router.post("", response_model=ConnectionOut)
-async def create_connection(body: ConnectionIn, db: AsyncSession = Depends(get_db)):
-    aid = await account_id(db)
+async def create_connection(body: ConnectionIn, db: AsyncSession = Depends(get_db), aid: str = Depends(require_account)):
     c = Connection(
         account_id=aid,
         name=body.name,
@@ -57,9 +55,9 @@ async def create_connection(body: ConnectionIn, db: AsyncSession = Depends(get_d
 
 
 @router.put("/{conn_id}", response_model=ConnectionOut)
-async def update_connection(conn_id: str, body: ConnectionIn, db: AsyncSession = Depends(get_db)):
+async def update_connection(conn_id: str, body: ConnectionIn, db: AsyncSession = Depends(get_db), aid: str = Depends(require_account)):
     c = await db.get(Connection, conn_id)
-    if not c:
+    if not c or c.account_id != aid:
         raise HTTPException(404, "connection not found")
     c.name = body.name
     c.base_url = body.base_url
@@ -82,9 +80,9 @@ async def update_connection(conn_id: str, body: ConnectionIn, db: AsyncSession =
 
 
 @router.delete("/{conn_id}")
-async def delete_connection(conn_id: str, db: AsyncSession = Depends(get_db)):
+async def delete_connection(conn_id: str, db: AsyncSession = Depends(get_db), aid: str = Depends(require_account)):
     c = await db.get(Connection, conn_id)
-    if c:
+    if c and c.account_id == aid:
         await db.delete(c)
         await db.commit()
     return {"ok": True}

@@ -28,6 +28,17 @@ class Account(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: _uuid("usr"))
+    email: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
+    password_hash: Mapped[str] = mapped_column(String, nullable=False)
+    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id"), index=True)
+    role: Mapped[str] = mapped_column(String, default="owner")  # owner | editor | viewer
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class Connection(Base):
     __tablename__ = "connections"
 
@@ -64,11 +75,12 @@ class Dictionary(Base):
 
 class Form(Base):
     __tablename__ = "forms"
-    __table_args__ = (UniqueConstraint("account_id", "form_id", name="uq_form_account_slug"),)
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: _uuid("form"))
     account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id"), index=True)
-    form_id: Mapped[str] = mapped_column(String, nullable=False, index=True)  # public slug
+    # Globally-unique public slug: it is the embed key, so it must be
+    # unambiguous across tenants.
+    form_id: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
     title: Mapped[str] = mapped_column(String, nullable=False)
     version: Mapped[int] = mapped_column(Integer, default=1)
     grid_columns: Mapped[int] = mapped_column(Integer, default=2)
