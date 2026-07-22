@@ -70,6 +70,25 @@ async def test_connection_secret_never_returned_in_cleartext(client):
     assert "SUPER_SECRET_TOKEN" not in listing.text
 
 
+async def test_file_upload_and_retrieve(client):
+    files = {"file": ("hello.txt", b"hello world", "text/plain")}
+    up = await client.post("/api/public/files", files=files)
+    assert up.status_code == 200
+    body = up.json()
+    assert body["size"] == 11 and body["filename"] == "hello.txt"
+    got = await client.get(body["url"])
+    assert got.status_code == 200
+    assert got.content == b"hello world"
+
+
+async def test_manual_dictionary_options_endpoint(client):
+    # order_form references dict_regions (manual) — options come straight back.
+    r = await client.post("/api/public/dictionaries/dict_regions/options", json={"values": {}})
+    assert r.status_code == 200
+    codes = {i["code"] for i in r.json()["items"]}
+    assert {"msk", "spb", "nsk"} <= codes
+
+
 async def test_form_crud_roundtrip(client):
     created = await client.post(
         "/api/forms",

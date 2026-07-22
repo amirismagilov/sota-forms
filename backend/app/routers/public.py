@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..crypto import sign_payload
 from ..db import get_db
 from ..deps import get_account
+from ..dict_resolver import resolve_api_dictionary
 from ..models import Dictionary, Form, Submission, WebhookDelivery
 from ..ratelimit import check_rate_limit
 from ..schemas import PublicFormOut, SubmitIn
@@ -63,6 +64,27 @@ async def public_form(form_id: str, db: AsyncSession = Depends(get_db)):
         design_tokens=acc.design_tokens,
         dictionaries=dicts,
     )
+
+
+@router.post("/dictionaries/{dict_id}/options")
+async def dictionary_options(dict_id: str, body: dict | None = None, db: AsyncSession = Depends(get_db)):
+    """Resolve options for an API dictionary given current form values (ФР-39..42).
+
+    Secrets and mapping stay on the backend; the widget only sends field values.
+    """
+    d = await db.get(Dictionary, dict_id)
+    if not d:
+        raise HTTPException(404, "dictionary not found")
+    if d.type != "api":
+        return {"items": d.items}
+    values = (body or {}).get("values", {})
+    try:
+        items = await resolve_api_dictionary(db, d, values)
+        return {"items": items}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, f"dictionary source error: {exc}") from exc
 
 
 @router.post("/forms/{form_id}/submit")

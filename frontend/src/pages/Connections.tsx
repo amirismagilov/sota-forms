@@ -75,6 +75,18 @@ export default function Connections() {
       <Drawer title={editing ? 'Подключение' : 'Новое подключение'} open={open} width={520} onClose={() => setOpen(false)}
         extra={<Button type="primary" onClick={submit}>Сохранить</Button>}>
         <AntForm form={form} layout="vertical">
+          <AntForm.Item label="Пресеты">
+            <Space wrap>
+              <Button size="small" onClick={() => form.setFieldsValue({
+                name: 'DaData Suggestions', base_url: 'https://suggestions.dadata.ru/suggestions/api/4_1/rs',
+                auth_type: 'apikey_header', headerName: 'Authorization', whitelist: '^/suggest/.*$',
+                timeout: 5000, rate_limit: 60,
+              })}>DaData</Button>
+              <Button size="small" onClick={() => form.setFieldsValue({
+                name: 'REST API', base_url: 'https://api.example.com', auth_type: 'bearer', timeout: 5000, rate_limit: 60, whitelist: '',
+              })}>REST + Bearer</Button>
+            </Space>
+          </AntForm.Item>
           <AntForm.Item name="name" label="Название" rules={[{ required: true }]}><Input /></AntForm.Item>
           <AntForm.Item name="base_url" label="Base URL" rules={[{ required: true }]}><Input placeholder="https://suggestions.dadata.ru/..." /></AntForm.Item>
           <AntForm.Item name="auth_type" label="Тип авторизации"><Select options={AUTH_TYPES} /></AntForm.Item>

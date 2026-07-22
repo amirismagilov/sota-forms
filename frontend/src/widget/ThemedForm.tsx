@@ -1,7 +1,8 @@
 import { StyleProvider } from '@ant-design/cssinjs';
-import { App as AntApp, ConfigProvider } from 'antd';
 import type Entity from '@ant-design/cssinjs/es/Cache';
-import FormRenderer from '../renderer/FormRenderer';
+import { App as AntApp, ConfigProvider } from 'antd';
+import { forwardRef } from 'react';
+import FormRenderer, { type FormHandle } from '../renderer/FormRenderer';
 import type { Dictionary, FormSchema } from '../types';
 
 interface Props {
@@ -12,16 +13,32 @@ interface Props {
   cache?: Entity;
   onSubmit?: (data: Record<string, any>) => Promise<any>;
   onChange?: (field: string, value: any, all: Record<string, any>) => void;
+  onError?: (errors: Record<string, string>) => void;
+  apiDictLoader?: (dictId: string, values: Record<string, any>) => Promise<{ code: string; label: string; attrs?: any }[]>;
+  fileUpload?: (file: File) => Promise<{ id: string; url: string; filename: string; size: number }>;
   showTitle?: boolean;
 }
 
 /** Ant Design form wrapped in a theme provider; style-isolated when a
  *  shadow-root container + cache are supplied (Web Component use, KP-10). */
-export default function ThemedForm({ schema, dictionaries, tokens, container, cache, onSubmit, onChange, showTitle }: Props) {
+const ThemedForm = forwardRef<FormHandle, Props>(function ThemedForm(
+  { schema, dictionaries, tokens, container, cache, onSubmit, onChange, onError, apiDictLoader, fileUpload, showTitle },
+  ref,
+) {
   const inner = (
     <ConfigProvider theme={{ token: tokens?.token || {} }} getPopupContainer={() => container || document.body}>
       <AntApp>
-        <FormRenderer schema={schema} dictionaries={dictionaries} onSubmit={onSubmit} onChange={onChange} showTitle={showTitle} />
+        <FormRenderer
+          ref={ref}
+          schema={schema}
+          dictionaries={dictionaries}
+          onSubmit={onSubmit}
+          onChange={onChange}
+          onError={onError}
+          apiDictLoader={apiDictLoader}
+          fileUpload={fileUpload}
+          showTitle={showTitle}
+        />
       </AntApp>
     </ConfigProvider>
   );
@@ -33,4 +50,6 @@ export default function ThemedForm({ schema, dictionaries, tokens, container, ca
     );
   }
   return inner;
-}
+});
+
+export default ThemedForm;

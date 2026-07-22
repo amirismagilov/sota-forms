@@ -1,8 +1,9 @@
-import { QuestionCircleOutlined } from '@ant-design/icons';
+import { QuestionCircleOutlined, UploadOutlined } from '@ant-design/icons';
 import {
   Alert,
   Button,
   Checkbox,
+  ColorPicker,
   DatePicker,
   Descriptions,
   Input,
@@ -11,45 +12,58 @@ import {
   Rate,
   Select,
   Slider,
+  Spin,
   Switch,
+  TimePicker,
   Tooltip,
   Typography,
   Upload,
   message,
 } from 'antd';
-import { UploadOutlined } from '@ant-design/icons';
-import { useMemo, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import type { Dictionary, Field, FormSchema } from '../types';
 import { dictItemsFor, evalCondition, evalFormula } from './engine';
+import { maskValue } from './masks';
+import SignaturePad from './SignaturePad';
+import { validateFileMeta, validateImageDims } from './validateFile';
 
-const { Title, Text, Paragraph } = Typography;
+const { Title, Paragraph } = Typography;
+
+const LAYOUT = ['section_header', 'divider', 'info_text'];
+const FULL_WIDTH = [...LAYOUT, 'textarea', 'calculated', 'signature'];
+
+export interface FormHandle {
+  getValues: () => Record<string, any>;
+  setValues: (v: Record<string, any>) => void;
+  validate: () => { valid: boolean; errors: Record<string, string> };
+  reset: () => void;
+  submit: () => void;
+}
 
 interface Props {
   schema: Pick<FormSchema, 'fields' | 'grid_columns' | 'submit' | 'title'>;
   dictionaries: Dictionary[];
   onSubmit?: (data: Record<string, any>) => Promise<{ successMessage?: string; redirectUrl?: string | null; submissionId?: string }>;
   onChange?: (field: string, value: any, all: Record<string, any>) => void;
+  onError?: (errors: Record<string, string>) => void;
   showTitle?: boolean;
+  apiDictLoader?: (dictId: string, values: Record<string, any>) => Promise<{ code: string; label: string; attrs?: any }[]>;
+  fileUpload?: (file: File) => Promise<{ id: string; url: string; filename: string; size: number }>;
 }
 
-function applyMask(preset: string | undefined, raw: string): string {
-  if (preset === 'phone') {
-    const d = raw.replace(/\D/g, '').replace(/^8/, '7').replace(/^7/, '').slice(0, 10);
-    let out = '+7';
-    if (d.length > 0) out += ' (' + d.slice(0, 3);
-    if (d.length >= 3) out += ') ' + d.slice(3, 6);
-    if (d.length >= 6) out += '-' + d.slice(6, 8);
-    if (d.length >= 8) out += '-' + d.slice(8, 10);
-    return out;
-  }
-  return raw;
-}
+type DictItem = { code: string; label: string; attrs?: any };
 
-export default function FormRenderer({ schema, dictionaries, onSubmit, onChange, showTitle = true }: Props) {
+const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
+  { schema, dictionaries, onSubmit, onChange, onError, showTitle = true, apiDictLoader, fileUpload },
+  ref,
+) {
   const [values, setValues] = useState<Record<string, any>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState<string | null>(null);
+  const [apiOptions, setApiOptions] = useState<Record<string, DictItem[]>>({});
+  const [apiLoading, setApiLoading] = useState<Record<string, boolean>>({});
+  const apiKeys = useRef<Record<string, string>>({});
 
   const dictById = useMemo(() => {
     const m: Record<string, Dictionary> = {};
@@ -57,35 +71,64 @@ export default function FormRenderer({ schema, dictionaries, onSubmit, onChange,
     return m;
   }, [dictionaries]);
 
-  // Attributes of the selected dictionary value for each dict-backed field.
+  // Options available for a dict-backed field (manual filter or API result).
+  const optionsFor = (f: Field): DictItem[] => {
+    const dict = f.dictionaryId ? dictById[f.dictionaryId] : undefined;
+    if (!dict) return [];
+    if (dict.type === 'api') return apiOptions[f.id] || [];
+    return dictItemsFor(dict, f, values).map((it) => ({ code: it.code, label: it.label, attrs: it.attrs }));
+  };
+
+  // Selected-value attributes for each dict field (manual + API).
   const attrs = useMemo(() => {
     const a: Record<string, Record<string, any>> = {};
     for (const f of schema.fields) {
-      if (f.dictionaryId && values[f.id] !== undefined) {
-        const dict = dictById[f.dictionaryId];
-        const item = dict?.items.find((it) => it.code === values[f.id]);
-        if (item?.attrs) a[f.id] = item.attrs;
-      }
+      if (!f.dictionaryId || values[f.id] === undefined) continue;
+      const dict = dictById[f.dictionaryId];
+      const pool: DictItem[] = dict?.type === 'api' ? apiOptions[f.id] || [] : dict?.items || [];
+      const item = pool.find((it) => it.code === values[f.id]);
+      if (item?.attrs) a[f.id] = item.attrs;
     }
     return a;
-  }, [values, schema.fields, dictById]);
+  }, [values, schema.fields, dictById, apiOptions]);
 
-  // Values + calculated fields resolved.
   const computed = useMemo(() => {
     const c: Record<string, any> = { ...values };
     for (const f of schema.fields) {
-      if (f.type === 'calculated' && f.formula) {
-        c[f.id] = evalFormula(f.formula, c, attrs);
-      }
+      if (f.type === 'calculated' && f.formula) c[f.id] = evalFormula(f.formula, c, attrs);
     }
     return c;
   }, [values, attrs, schema.fields]);
 
+  // Load API-dictionary options when their dependency values change.
+  useEffect(() => {
+    if (!apiDictLoader) return;
+    for (const f of schema.fields) {
+      const dict = f.dictionaryId ? dictById[f.dictionaryId] : undefined;
+      if (!dict || dict.type !== 'api') continue;
+      const deps = dict.dependencies || [];
+      const ready = deps.every((d) => values[d.fieldId] !== undefined && values[d.fieldId] !== '');
+      if (deps.length && !ready) {
+        if (apiKeys.current[f.id] !== '∅') {
+          apiKeys.current[f.id] = '∅';
+          setApiOptions((p) => ({ ...p, [f.id]: [] }));
+        }
+        continue;
+      }
+      const depVals = Object.fromEntries(deps.map((d) => [d.fieldId, values[d.fieldId]]));
+      const key = JSON.stringify(depVals);
+      if (apiKeys.current[f.id] === key) continue;
+      apiKeys.current[f.id] = key;
+      setApiLoading((p) => ({ ...p, [f.id]: true }));
+      apiDictLoader(f.dictionaryId!, values)
+        .then((items) => setApiOptions((p) => ({ ...p, [f.id]: items })))
+        .catch(() => setApiOptions((p) => ({ ...p, [f.id]: [] })))
+        .finally(() => setApiLoading((p) => ({ ...p, [f.id]: false })));
+    }
+  }, [values, schema.fields, dictById, apiDictLoader]);
+
   const setValue = (field: Field, v: any) => {
-    // Build the next values from current state (no side-effects inside the
-    // updater, so StrictMode's double-invoke can't fire onChange twice).
     const nextVals = { ...values, [field.id]: v };
-    // Reset children whose dictionary depends on this field (cascade).
     for (const f of schema.fields) {
       if (f.dictionaryId) {
         const dep = dictById[f.dictionaryId]?.dependencies?.[0];
@@ -110,11 +153,12 @@ export default function FormRenderer({ schema, dictionaries, onSubmit, onChange,
       if (val.minLength && v.length < val.minLength) return `Минимум ${val.minLength} символов`;
       if (val.maxLength && v.length > val.maxLength) return `Максимум ${val.maxLength} символов`;
     }
-    if (f.type === 'number' || f.type === 'amount') {
+    if (f.type === 'number' || f.type === 'amount' || f.type === 'slider') {
       if (val.min !== undefined && Number(v) < val.min) return `Минимум ${val.min}`;
       if (val.max !== undefined && Number(v) > val.max) return `Максимум ${val.max}`;
     }
     if (f.type === 'email' && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(v))) return 'Некорректный email';
+    if (f.type === 'url' && !/^https?:\/\/.+/.test(String(v))) return 'Некорректный URL';
     const regex = f.mask?.regex || val.regex;
     if (regex) {
       try {
@@ -124,17 +168,22 @@ export default function FormRenderer({ schema, dictionaries, onSubmit, onChange,
     return '';
   }
 
-  async function handleSubmit() {
+  function runValidation(): Record<string, string> {
     const errs: Record<string, string> = {};
     for (const f of schema.fields) {
-      if (['section_header', 'divider', 'info_text'].includes(f.type)) continue;
-      if (!isVisible(f)) continue;
+      if (LAYOUT.includes(f.type) || !isVisible(f)) continue;
       const e = validateField(f);
       if (e) errs[f.id] = e;
     }
+    return errs;
+  }
+
+  async function handleSubmit() {
+    const errs = runValidation();
     setErrors(errs);
     if (Object.keys(errs).length) {
       message.error('Проверьте заполнение формы');
+      onError?.(errs);
       return;
     }
     if (!onSubmit) {
@@ -143,11 +192,9 @@ export default function FormRenderer({ schema, dictionaries, onSubmit, onChange,
     }
     setSubmitting(true);
     try {
-      // Only send visible fields + calculated values.
       const payload: Record<string, any> = {};
       for (const f of schema.fields) {
-        if (['section_header', 'divider', 'info_text'].includes(f.type)) continue;
-        if (!isVisible(f)) continue;
+        if (LAYOUT.includes(f.type) || !isVisible(f)) continue;
         payload[f.id] = computed[f.id];
       }
       const res = await onSubmit(payload);
@@ -160,9 +207,24 @@ export default function FormRenderer({ schema, dictionaries, onSubmit, onChange,
     }
   }
 
-  if (done) {
-    return <Alert type="success" showIcon message={done} style={{ margin: 8 }} />;
-  }
+  useImperativeHandle(ref, () => ({
+    getValues: () => ({ ...computed }),
+    setValues: (v) => setValues((prev) => ({ ...prev, ...v })),
+    validate: () => {
+      const errs = runValidation();
+      setErrors(errs);
+      return { valid: Object.keys(errs).length === 0, errors: errs };
+    },
+    reset: () => {
+      setValues({});
+      setErrors({});
+      setDone(null);
+      apiKeys.current = {};
+    },
+    submit: handleSubmit,
+  }));
+
+  if (done) return <Alert type="success" showIcon message={done} style={{ margin: 8 }} />;
 
   const cols = schema.grid_columns || 2;
 
@@ -173,7 +235,7 @@ export default function FormRenderer({ schema, dictionaries, onSubmit, onChange,
         {schema.fields.map((f) => {
           if (!isVisible(f)) return null;
           const span = Math.min(f.gridSpan || 1, cols);
-          const full = ['section_header', 'divider', 'info_text', 'textarea', 'calculated'].includes(f.type);
+          const full = FULL_WIDTH.includes(f.type);
           return (
             <div key={f.id} style={{ gridColumn: `span ${full ? cols : span}` }}>
               {renderField(f)}
@@ -211,12 +273,67 @@ export default function FormRenderer({ schema, dictionaries, onSubmit, onChange,
         {errors[f.id] && <div style={{ color: '#ff4d4f', fontSize: 12, marginTop: 2 }}>{errors[f.id]}</div>}
         {f.showExtra && attrs[f.id] && (
           <Descriptions size="small" column={1} bordered style={{ marginTop: 8 }}>
-            {Object.entries(attrs[f.id]).map(([k, v]) => (
-              <Descriptions.Item key={k} label={k}>{String(v)}</Descriptions.Item>
+            {Object.entries(attrs[f.id]).map(([k, val]) => (
+              <Descriptions.Item key={k} label={k}>{String(val)}</Descriptions.Item>
             ))}
           </Descriptions>
         )}
       </div>
+    );
+  }
+
+  function dictControl(f: Field) {
+    const opts = optionsFor(f).map((o) => ({ label: o.label, value: o.code }));
+    const loading = !!apiLoading[f.id];
+    const v = values[f.id];
+    const display = f.dictDisplay || (f.type === 'dict_radio' ? 'radio' : f.type === 'dict_checkbox' ? 'checkbox' : 'select');
+    if (display === 'radio')
+      return wrap(f, <Radio.Group value={v} onChange={(e) => setValue(f, e.target.value)}>{opts.map((o) => <Radio key={o.value} value={o.value}>{o.label}</Radio>)}</Radio.Group>);
+    if (display === 'checkbox')
+      return wrap(f, <Checkbox.Group value={v} options={opts} onChange={(x) => setValue(f, x)} />);
+    return wrap(
+      f,
+      <Select
+        style={{ width: '100%' }}
+        value={v}
+        placeholder={f.placeholder || 'Выберите…'}
+        options={opts}
+        loading={loading}
+        onChange={(x) => setValue(f, x)}
+        showSearch
+        optionFilterProp="label"
+        allowClear
+        notFoundContent={loading ? <Spin size="small" /> : 'Нет вариантов (проверьте зависимости)'}
+      />,
+    );
+  }
+
+  function fileControl(f: Field) {
+    const fileList = (values[f.id] || []).map((x: any, i: number) => ({ uid: String(i), name: x.filename, url: x.url, status: 'done' }));
+    return wrap(
+      f,
+      <Upload
+        listType={f.type === 'image' ? 'picture' : 'text'}
+        fileList={fileList}
+        maxCount={f.fileValidation?.maxCount || 5}
+        accept={f.fileValidation?.extensions}
+        beforeUpload={async (file) => {
+          const err = validateFileMeta(file, f.fileValidation) || (await validateImageDims(file, f.fileValidation));
+          if (err) { message.error(err); return Upload.LIST_IGNORE; }
+          if (fileUpload) {
+            try {
+              const res = await fileUpload(file);
+              setValue(f, [...(values[f.id] || []), res]);
+            } catch { message.error('Ошибка загрузки файла'); }
+          }
+          return false; // prevent auto-upload; we handle it
+        }}
+        onRemove={(file) => {
+          setValue(f, (values[f.id] || []).filter((x: any) => x.filename !== file.name));
+        }}
+      >
+        <Button icon={<UploadOutlined />}>Загрузить</Button>
+      </Upload>,
     );
   }
 
@@ -233,7 +350,7 @@ export default function FormRenderer({ schema, dictionaries, onSubmit, onChange,
         return wrap(f, <Input.TextArea rows={f.rows || 3} placeholder={f.placeholder || ''} value={v} onChange={(e) => setValue(f, e.target.value)} />);
       case 'number':
       case 'amount':
-        return wrap(f, <InputNumber style={{ width: '100%' }} value={v} min={f.validation?.min} max={f.validation?.max} onChange={(x) => setValue(f, x)} addonAfter={f.type === 'amount' ? '₽' : undefined} />);
+        return wrap(f, <InputNumber style={{ width: '100%' }} value={v} min={f.validation?.min} max={f.validation?.max} step={f.validation?.step} onChange={(x) => setValue(f, x)} addonAfter={f.type === 'amount' ? '₽' : undefined} />);
       case 'calculated': {
         const num = Number(computed[f.id] || 0);
         const text = `${f.calcPrefix || ''}${num.toFixed(f.calcDecimals ?? 2)}${f.calcSuffix || ''}`;
@@ -264,39 +381,42 @@ export default function FormRenderer({ schema, dictionaries, onSubmit, onChange,
         );
       case 'date':
         return wrap(f, <DatePicker style={{ width: '100%' }} onChange={(_, s) => setValue(f, s)} />);
+      case 'datetime':
+        return wrap(f, <DatePicker showTime style={{ width: '100%' }} onChange={(_, s) => setValue(f, s)} />);
+      case 'time':
+        return wrap(f, <TimePicker style={{ width: '100%' }} onChange={(_, s) => setValue(f, s)} />);
+      case 'color':
+        return wrap(f, <ColorPicker showText value={v} onChange={(_, hex) => setValue(f, hex)} />);
+      case 'signature':
+        return wrap(f, <SignaturePad value={v} onChange={(dataUrl) => setValue(f, dataUrl)} />);
       case 'rating':
         return wrap(f, <Rate value={v} onChange={(x) => setValue(f, x)} />);
       case 'slider':
         return wrap(f, <Slider value={v} min={f.validation?.min ?? 0} max={f.validation?.max ?? 100} onChange={(x) => setValue(f, x)} />);
       case 'dict_select':
       case 'dict_radio':
-      case 'dict_checkbox': {
-        const dict = f.dictionaryId ? dictById[f.dictionaryId] : undefined;
-        const items = dictItemsFor(dict, f, values);
-        const opts = items.map((it) => ({ label: it.label, value: it.code }));
-        const display = f.dictDisplay || (f.type === 'dict_radio' ? 'radio' : f.type === 'dict_checkbox' ? 'checkbox' : 'select');
-        if (display === 'radio')
-          return wrap(f, <Radio.Group value={v} onChange={(e) => setValue(f, e.target.value)}>{opts.map((o) => <Radio key={o.value} value={o.value}>{o.label}</Radio>)}</Radio.Group>);
-        if (display === 'checkbox')
-          return wrap(f, <Checkbox.Group value={v} options={opts} onChange={(x) => setValue(f, x)} />);
-        return wrap(f, <Select style={{ width: '100%' }} value={v} placeholder={f.placeholder || 'Выберите…'} options={opts} onChange={(x) => setValue(f, x)} allowClear notFoundContent="Нет вариантов (проверьте зависимости)" />);
-      }
+      case 'dict_checkbox':
+        return dictControl(f);
       case 'file':
       case 'image':
-        return wrap(f, <Upload beforeUpload={() => false} maxCount={5}><Button icon={<UploadOutlined />}>Загрузить</Button></Upload>);
+        return fileControl(f);
       default: {
         // text, email, phone, url, password, inn, snils, passport, bik, kpp, ogrn, card, ...
         const isPass = f.type === 'password';
         const Comp: any = isPass ? Input.Password : Input;
+        const preset = f.mask?.preset || (['phone', 'inn', 'snils', 'passport', 'bik', 'kpp', 'ogrn', 'card'].includes(f.type) ? f.type : undefined);
         return wrap(
           f,
           <Comp
             placeholder={f.placeholder || ''}
             value={v}
-            onChange={(e: any) => setValue(f, f.mask?.preset === 'phone' ? applyMask('phone', e.target.value) : e.target.value)}
+            inputMode={preset && preset !== 'phone' ? 'numeric' : undefined}
+            onChange={(e: any) => setValue(f, preset || f.mask?.pattern ? maskValue(f.type, f.mask?.pattern, preset, e.target.value) : e.target.value)}
           />,
         );
       }
     }
   }
-}
+});
+
+export default FormRenderer;

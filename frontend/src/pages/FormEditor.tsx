@@ -26,7 +26,7 @@ import {
 } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { getForm, getTheme, listDictionaries, updateForm } from '../api';
+import { getDictOptions, getForm, getTheme, listDictionaries, updateForm, uploadFile } from '../api';
 import { extractRefs } from '../renderer/engine';
 import type { Dictionary, Field, FormSchema } from '../types';
 import ThemedForm from '../widget/ThemedForm';
@@ -176,6 +176,8 @@ export default function FormEditor() {
             schema={{ fields: form.fields, grid_columns: form.grid_columns, submit: form.submit, title: form.title }}
             dictionaries={dicts}
             tokens={{ token: tokens }}
+            apiDictLoader={getDictOptions}
+            fileUpload={uploadFile}
             showTitle={false}
           />
         </Card>
@@ -277,6 +279,25 @@ export default function FormEditor() {
               <Col span={12}><AntForm.Item name={['validation', 'min']} label="Мин."><InputNumber style={{ width: '100%' }} /></AntForm.Item></Col>
               <Col span={12}><AntForm.Item name={['validation', 'max']} label="Макс."><InputNumber style={{ width: '100%' }} /></AntForm.Item></Col>
             </Row>
+          )}
+
+          {['file', 'image'].includes(editType) && (
+            <Card size="small" title="Валидация файлов" style={{ marginBottom: 12 }}>
+              <AntForm.Item name={['fileValidation', 'extensions']} label="Расширения"><Input placeholder=".pdf,.jpg,.png" /></AntForm.Item>
+              <Row gutter={12}>
+                <Col span={12}><AntForm.Item name={['fileValidation', 'maxSize']} label="Макс. размер (МБ)"><InputNumber style={{ width: '100%' }} /></AntForm.Item></Col>
+                <Col span={12}><AntForm.Item name={['fileValidation', 'maxCount']} label="Макс. кол-во"><InputNumber style={{ width: '100%' }} /></AntForm.Item></Col>
+              </Row>
+              {editType === 'image' && (
+                <Row gutter={12}>
+                  <Col span={6}><AntForm.Item name={['fileValidation', 'minWidth']} label="Мин. W"><InputNumber style={{ width: '100%' }} /></AntForm.Item></Col>
+                  <Col span={6}><AntForm.Item name={['fileValidation', 'maxWidth']} label="Макс. W"><InputNumber style={{ width: '100%' }} /></AntForm.Item></Col>
+                  <Col span={6}><AntForm.Item name={['fileValidation', 'minHeight']} label="Мин. H"><InputNumber style={{ width: '100%' }} /></AntForm.Item></Col>
+                  <Col span={6}><AntForm.Item name={['fileValidation', 'maxHeight']} label="Макс. H"><InputNumber style={{ width: '100%' }} /></AntForm.Item></Col>
+                </Row>
+              )}
+              <AntForm.Item name={['fileValidation', 'errorMsg']} label="Сообщение об ошибке"><Input /></AntForm.Item>
+            </Card>
           )}
 
           {!LAYOUT_TYPES.includes(editType) && (

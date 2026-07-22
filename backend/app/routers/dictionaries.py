@@ -6,8 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_db
 from ..deps import account_id
+from ..dict_resolver import resolve_api_dictionary
 from ..models import Dictionary
-from ..proxy_client import run_proxy_request
 from ..schemas import DictionaryIn, DictionaryOut
 
 router = APIRouter(prefix="/api/dictionaries", tags=["dictionaries"])
@@ -65,39 +65,14 @@ async def delete_dictionary(dict_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/{dict_id}/test")
-async def test_dictionary(dict_id: str, params: dict | None = None, db: AsyncSession = Depends(get_db)):
+async def test_dictionary(dict_id: str, body: dict | None = None, db: AsyncSession = Depends(get_db)):
     """Test-run an API dictionary's request in the constructor (ФР-37)."""
     d = await db.get(Dictionary, dict_id)
     if not d or d.type != "api" or not d.api_config:
         raise HTTPException(400, "not an API dictionary")
-    cfg = d.api_config
+    values = (body or {}).get("values", {})
     try:
-        raw = await run_proxy_request(
-            db,
-            connection_id=cfg.get("connectionId"),
-            endpoint=cfg.get("endpoint", ""),
-            method=cfg.get("method", "GET"),
-            params=params or {},
-        )
+        items = await resolve_api_dictionary(db, d, values)
     except Exception as exc:  # honest failure surfacing
         return {"ok": False, "error": str(exc)}
-    mapping = cfg.get("mapping", {})
-    items = _apply_mapping(raw, mapping)
-    return {"ok": True, "raw": raw, "items": items[:50]}
-
-
-def _apply_mapping(raw: object, mapping: dict) -> list[dict]:
-    path = mapping.get("path", "")
-    node = raw
-    for part in [p for p in path.split(".") if p]:
-        if isinstance(node, dict):
-            node = node.get(part)
-    if not isinstance(node, list):
-        return []
-    code_f = mapping.get("codeField", "code")
-    val_f = mapping.get("valueField", "value")
-    out = []
-    for it in node:
-        if isinstance(it, dict):
-            out.append({"code": str(it.get(code_f, "")), "label": str(it.get(val_f, "")), "attrs": it})
-    return out
+    return {"ok": True, "items": items[:50]}

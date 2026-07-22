@@ -7,10 +7,11 @@ from sqlalchemy import select
 from .config import get_settings
 from .db import SessionLocal
 from .deps import DEMO_TOKENS
-from .models import Account, Dictionary, Form
+from .models import Account, Connection, Dictionary, Form
 
 DEMO_ACCOUNT_ID = "acc_demo"
 MOCK_WEBHOOK = get_settings().mock_webhook_url
+MOCK_EXT_BASE = get_settings().mock_ext_base
 
 
 async def seed_if_empty() -> None:
@@ -78,7 +79,42 @@ async def seed_if_empty() -> None:
                 {"code": "gold", "label": "Золотой (−10%)", "parentValue": "", "attrs": {"discount": 10}},
             ],
         )
-        db.add_all([regions, delivery, tariffs])
+        # API dictionary via the built-in mock external catalog API.
+        catalog_conn = Connection(
+            id="conn_catalog",
+            account_id=DEMO_ACCOUNT_ID,
+            name="Каталог (mock API)",
+            base_url=MOCK_EXT_BASE,
+            auth_type="none",
+            auth_config={},
+            whitelist=[],
+        )
+        products = Dictionary(
+            id="dict_products",
+            account_id=DEMO_ACCOUNT_ID,
+            code="products",
+            name="Товары (API)",
+            type="api",
+            attrs=[
+                {"name": "price", "label": "Цена", "type": "number"},
+                {"name": "stock", "label": "Остаток", "type": "number"},
+            ],
+            api_config={
+                "connectionId": "conn_catalog",
+                "urlMode": "single",
+                "method": "GET",
+                "endpoint": "/products",
+                "params": "",
+                "mapping": {
+                    "path": "data",
+                    "codeField": "sku",
+                    "valueField": "title",
+                    "attrs": {"price": "price", "stock": "stock"},
+                },
+                "refresh": "hourly",
+            },
+        )
+        db.add_all([regions, delivery, tariffs, catalog_conn, products])
 
         # --- Demo form ----------------------------------------------------
         fields = [
@@ -99,6 +135,9 @@ async def seed_if_empty() -> None:
              "requiredIf": {"fieldId": "f_client_type", "operator": "eq", "value": "company"}},
 
             {"id": "h_order", "type": "section_header", "label": "Заказ"},
+            {"id": "f_product", "type": "dict_select", "label": "Товар (из API-каталога)", "gridSpan": 2,
+             "dictionaryId": "dict_products", "dictDisplay": "select", "showExtra": True,
+             "hint": "Загружается с внешнего API через backend-proxy"},
             {"id": "f_region", "type": "dict_select", "label": "Регион", "gridSpan": 1, "required": True,
              "dictionaryId": "dict_regions", "dictDisplay": "select"},
             {"id": "f_delivery", "type": "dict_select", "label": "Доставка", "gridSpan": 1, "required": True,

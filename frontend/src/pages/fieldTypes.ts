@@ -10,6 +10,9 @@ export const FIELD_TYPE_GROUPS: { label: string; options: { label: string; value
       { label: 'Пароль', value: 'password' },
       { label: 'URL', value: 'url' },
       { label: 'Дата', value: 'date' },
+      { label: 'Дата и время', value: 'datetime' },
+      { label: 'Время', value: 'time' },
+      { label: 'Цвет', value: 'color' },
     ],
   },
   {
@@ -42,6 +45,7 @@ export const FIELD_TYPE_GROUPS: { label: string; options: { label: string; value
     options: [
       { label: 'Файл', value: 'file' },
       { label: 'Изображение', value: 'image' },
+      { label: 'Подпись (canvas)', value: 'signature' },
       { label: 'Рейтинг', value: 'rating' },
       { label: 'Слайдер', value: 'slider' },
     ],

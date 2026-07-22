@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Пример встраивания формы (внешний сайт)</title>
+    <style>
+      body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; max-width: 820px; margin: 40px auto; padding: 0 16px; color: #222; }
+      header { border-bottom: 1px solid #eee; padding-bottom: 16px; margin-bottom: 24px; }
+      code { background: #f5f5f5; padding: 2px 6px; border-radius: 4px; }
+      .frame { border: 1px dashed #d9d9d9; border-radius: 10px; padding: 24px; }
+      .log { margin-top: 20px; font-size: 13px; color: #666; }
+      button.api { margin: 4px 4px 0 0; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Стороннее приложение</h1>
+      <p>Эта страница не знает ничего про форму, кроме её <code>form-id</code>. Всё, что она делает — подключает один скрипт и ставит один тег.</p>
+      <pre><code>&lt;script src="/form-widget.js"&gt;&lt;/script&gt;
+&lt;no-code-form form-id="order_form"&gt;&lt;/no-code-form&gt;</code></pre>
+    </header>
+
+    <div class="frame">
+      <no-code-form id="wc" form-id="order_form"></no-code-form>
+    </div>
+
+    <div>
+      <button class="api" onclick="document.getElementById('wc').setValues({ f_name: 'Программно заполнено' })">setValues()</button>
+      <button class="api" onclick="alert(JSON.stringify(document.getElementById('wc').getValues(), null, 2))">getValues()</button>
+      <button class="api" onclick="alert(JSON.stringify(document.getElementById('wc').validate(), null, 2))">validate()</button>
+      <button class="api" onclick="document.getElementById('wc').reset()">reset()</button>
+      <button class="api" onclick="document.getElementById('wc').submit()">submit()</button>
+    </div>
+
+    <div class="log" id="log">События: —</div>
+
+    <script src="/form-widget.js"></script>
+    <script>
+      const log = document.getElementById('log');
+      const wc = document.getElementById('wc');
+      ['form:ready', 'form:change', 'form:submit', 'form:error'].forEach((ev) => {
+        wc.addEventListener(ev, (e) => {
+          log.textContent = `Событие ${ev}: ` + JSON.stringify(e.detail);
+        });
+      });
+    </script>
+  </body>
+</html>

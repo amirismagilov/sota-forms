@@ -22,6 +22,19 @@ export interface FieldValidation {
   regexMessage?: string;
 }
 
+export interface FileValidation {
+  extensions?: string; // ".pdf,.jpg"
+  mimeTypes?: string;
+  maxSize?: number; // MB
+  minSize?: number; // KB
+  maxCount?: number;
+  minWidth?: number;
+  maxWidth?: number;
+  minHeight?: number;
+  maxHeight?: number;
+  errorMsg?: string;
+}
+
 export interface OptionItem {
   label: string;
   value: string;
@@ -50,6 +63,7 @@ export interface Field {
   visibleIf?: Condition;
   requiredIf?: Condition;
   rows?: number;
+  fileValidation?: FileValidation;
 }
 
 export interface DictAttr {

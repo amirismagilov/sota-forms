@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     # In docker-compose this is the backend service name; override for local runs.
     mock_webhook_url: str = "http://backend:8000/api/mock/webhook"
 
+    # Base URL of the built-in mock external API (for the demo API dictionary).
+    mock_ext_base: str = "http://backend:8000/api/mock/ext"
+
 
 @lru_cache
 def get_settings() -> Settings:

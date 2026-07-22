@@ -52,4 +52,16 @@ export const deliveriesBoard = () =>
 export const retryDelivery = (id: string) =>
   api.post(`/submissions/deliveries/${id}/retry`).then((r) => r.data);
 
+// ---- API dictionaries / files ----
+export const getDictOptions = (dictId: string, values: Record<string, any>) =>
+  api.post(`/public/dictionaries/${dictId}/options`, { values }).then((r) => r.data.items as { code: string; label: string; attrs?: any }[]);
+export const testDictionary = (dictId: string, values: Record<string, any>) =>
+  api.post(`/dictionaries/${dictId}/test`, { values }).then((r) => r.data);
+export const uploadFile = (file: File) => {
+  const fd = new FormData();
+  fd.append('file', file);
+  return api.post('/public/files', fd).then((r) => r.data as { id: string; url: string; filename: string; size: number });
+};
+export const importForm = (body: any) => api.post('/forms/import', body).then((r) => r.data);
+
 export default api;
