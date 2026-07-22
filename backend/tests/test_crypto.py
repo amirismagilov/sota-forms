@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from hypothesis import given
+from hypothesis import assume, given
 from hypothesis import strategies as st
 
 from app.crypto import (
@@ -28,6 +28,8 @@ def test_encrypt_decrypt_roundtrip(secret):
 
 @given(token=secrets)
 def test_redaction_never_leaks_secret(token):
+    # Exclude the degenerate case where the secret equals the redaction marker.
+    assume(token != "__set__")
     cfg = encrypt_auth_config({"token": token, "headerName": "Authorization"})
     redacted = redact_auth_config(cfg)
     # The redacted view sent to the frontend must not expose the secret value.

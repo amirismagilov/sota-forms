@@ -35,14 +35,24 @@ async def upload_file(file: UploadFile):
         }
 
 
+# Only these types are safe to render inline; everything else is forced to
+# download so an uploaded HTML/SVG can't execute in our origin (stored XSS).
+_INLINE_SAFE = {"image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf"}
+
+
 @router.get("/{file_id}")
 async def get_file(file_id: str):
     async for db in get_db():
         rec = await db.get(StoredFile, file_id)
         if not rec:
             raise HTTPException(404, "file not found")
+        disposition = "inline" if rec.content_type in _INLINE_SAFE else "attachment"
+        safe_name = rec.filename.replace('"', "")
         return Response(
             content=rec.data,
-            media_type=rec.content_type,
-            headers={"Content-Disposition": f'inline; filename="{rec.filename}"'},
+            media_type=rec.content_type if rec.content_type in _INLINE_SAFE else "application/octet-stream",
+            headers={
+                "Content-Disposition": f'{disposition}; filename="{safe_name}"',
+                "X-Content-Type-Options": "nosniff",
+            },
         )

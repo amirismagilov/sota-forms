@@ -58,5 +58,7 @@ jobs:
       - run: npm install
       - name: Type gate
         run: npm run typecheck
-      - name: Build
+      - name: Build app
         run: npm run build
+      - name: Build embeddable widget bundle
+        run: npm run build:widget
