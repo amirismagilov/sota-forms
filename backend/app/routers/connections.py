@@ -116,7 +116,8 @@ async def test_connection(
     try:
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             resp = await client.request(
-                (body.method or "GET").upper(), url, headers=headers, params=query
+                (body.method or "GET").upper(), url, headers=headers, params=query,
+                json=body.body,
             )
         latency = int((time.monotonic() - start) * 1000)
         reason = resp.reason_phrase or ""

@@ -49,6 +49,21 @@ def _dig(node: object, path: str) -> object:
     return node
 
 
+# Sensible field names to fall back to when the configured code/label field
+# isn't present in the response — so a dictionary "just works" with defaults.
+_CODE_CANDIDATES = ("id", "code", "value", "key", "uuid", "sku")
+_LABEL_CANDIDATES = ("name", "title", "label", "value", "fio", "full_name", "text")
+
+
+def _pick(item: dict, configured: str, candidates: tuple[str, ...]) -> object:
+    if configured in item and item[configured] is not None:
+        return item[configured]
+    for c in candidates:
+        if item.get(c) is not None:
+            return item[c]
+    return None
+
+
 def apply_mapping(raw: object, mapping: dict) -> list[dict]:
     node = _dig(raw, mapping.get("path", ""))
     if not isinstance(node, list):
@@ -59,22 +74,36 @@ def apply_mapping(raw: object, mapping: dict) -> list[dict]:
     out = []
     for it in node:
         if not isinstance(it, dict):
+            out.append({"code": str(it), "label": str(it), "attrs": {}})
             continue
+        code = _pick(it, code_f, _CODE_CANDIDATES)
+        label = _pick(it, val_f, _LABEL_CANDIDATES)
+        if code is None:
+            code = next(iter(it.values()), "")
+        if label is None:
+            label = code
         attrs = {name: it.get(src) for name, src in attr_map.items()} if attr_map else it
-        out.append({"code": str(it.get(code_f, "")), "label": str(it.get(val_f, "")), "attrs": attrs})
+        out.append({"code": str(code), "label": str(label), "attrs": attrs})
     return out
 
 
 def _cache_ttl(refresh: str | None) -> int:
-    return {"hourly": 3600, "daily": 86400, "manual": 0, "onDemand": 0}.get(refresh or "", 300)
+    # ttl == 0 means "never cache" — the source is hit on every request, which is
+    # what "on every form open" (onOpen) needs. hourly/daily cache for that long.
+    return {
+        "onOpen": 0, "onDemand": 0, "manual": 0,
+        "hourly": 3600, "daily": 86400,
+    }.get(refresh or "", 300)
 
 
-async def resolve_api_dictionary(db: AsyncSession, dictionary: Dictionary, values: dict) -> list[dict]:
+def _prepare_request(dictionary: Dictionary, values: dict) -> tuple[str | None, str, str, dict]:
+    """Resolve the concrete (connection, method, endpoint, params) to call.
+
+    Handles single vs smart URL modes and {{field}} substitution. Shared by the
+    live resolver and the constructor's test probe so both build the request
+    identically.
+    """
     cfg = dictionary.api_config or {}
-    if not cfg:
-        return []
-
-    # Determine endpoint + params (single vs smart URL modes).
     method = cfg.get("method", "GET")
     endpoint = cfg.get("endpoint", "")
     if cfg.get("urlMode") == "smart":
@@ -98,6 +127,16 @@ async def resolve_api_dictionary(db: AsyncSession, dictionary: Dictionary, value
     else:
         params = {}
 
+    return cfg.get("connectionId"), method, endpoint, params
+
+
+async def resolve_api_dictionary(db: AsyncSession, dictionary: Dictionary, values: dict) -> list[dict]:
+    cfg = dictionary.api_config or {}
+    if not cfg:
+        return []
+
+    conn_id, method, endpoint, params = _prepare_request(dictionary, values)
+
     cache_key = f"dictopt:{dictionary.id}:{endpoint}:{json.dumps(params, sort_keys=True)}"
     ttl = _cache_ttl(cfg.get("refresh"))
     r = _get_redis()
@@ -109,9 +148,7 @@ async def resolve_api_dictionary(db: AsyncSession, dictionary: Dictionary, value
         except Exception:
             pass
 
-    raw = await run_proxy_request(
-        db, connection_id=cfg.get("connectionId"), endpoint=endpoint, method=method, params=params
-    )
+    raw = await run_proxy_request(db, connection_id=conn_id, endpoint=endpoint, method=method, params=params)
     items = apply_mapping(raw, cfg.get("mapping", {}))
 
     if ttl and r is not None:
@@ -120,3 +157,17 @@ async def resolve_api_dictionary(db: AsyncSession, dictionary: Dictionary, value
         except Exception:
             pass
     return items
+
+
+async def probe_api_dictionary(
+    db: AsyncSession, dictionary: Dictionary, values: dict
+) -> tuple[object, list[dict]]:
+    """Test-run for the constructor: return (raw JSON, mapped items), no caching.
+
+    The raw response lets the UI auto-suggest path/code/label from the real data
+    instead of making the user guess field names.
+    """
+    conn_id, method, endpoint, params = _prepare_request(dictionary, values)
+    raw = await run_proxy_request(db, connection_id=conn_id, endpoint=endpoint, method=method, params=params)
+    items = apply_mapping(raw, (dictionary.api_config or {}).get("mapping", {}))
+    return raw, items

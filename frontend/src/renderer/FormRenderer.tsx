@@ -1,6 +1,7 @@
 import { QuestionCircleOutlined, UploadOutlined } from '@ant-design/icons';
 import {
   Alert,
+  AutoComplete,
   Button,
   Checkbox,
   ColorPicker,
@@ -48,13 +49,15 @@ interface Props {
   onError?: (errors: Record<string, string>) => void;
   showTitle?: boolean;
   apiDictLoader?: (dictId: string, values: Record<string, any>) => Promise<{ code: string; label: string; attrs?: any }[]>;
+  suggestLoader?: (field: Field, query: string, values: Record<string, any>) => Promise<SuggestItem[]>;
   fileUpload?: (file: File) => Promise<{ id: string; url: string; filename: string; size: number }>;
 }
 
 type DictItem = { code: string; label: string; attrs?: any };
+type SuggestItem = { value: string; label: string; data: any };
 
 const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
-  { schema, dictionaries, onSubmit, onChange, onError, showTitle = true, apiDictLoader, fileUpload },
+  { schema, dictionaries, onSubmit, onChange, onError, showTitle = true, apiDictLoader, suggestLoader, fileUpload },
   ref,
 ) {
   const [values, setValues] = useState<Record<string, any>>({});
@@ -64,6 +67,9 @@ const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
   const [apiOptions, setApiOptions] = useState<Record<string, DictItem[]>>({});
   const [apiLoading, setApiLoading] = useState<Record<string, boolean>>({});
   const apiKeys = useRef<Record<string, string>>({});
+  const [suggestOpts, setSuggestOpts] = useState<Record<string, SuggestItem[]>>({});
+  const [suggestBusy, setSuggestBusy] = useState<Record<string, boolean>>({});
+  const suggestTimers = useRef<Record<string, any>>({});
 
   const dictById = useMemo(() => {
     const m: Record<string, Dictionary> = {};
@@ -100,6 +106,24 @@ const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
     return c;
   }, [values, attrs, schema.fields]);
 
+  // Seed default values when the form loads (only for fields not yet touched).
+  useEffect(() => {
+    setValues((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const f of schema.fields) {
+        if (f.defaultValue === undefined || f.defaultValue === '' || next[f.id] !== undefined) continue;
+        let dv: any = f.defaultValue;
+        if (dv === 'true') dv = true;
+        else if (dv === 'false') dv = false;
+        else if ((f.type === 'number' || f.type === 'amount') && dv !== '' && !isNaN(Number(dv))) dv = Number(dv);
+        next[f.id] = dv;
+        changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [schema.fields]);
+
   // Load API-dictionary options when their dependency values change.
   useEffect(() => {
     if (!apiDictLoader) return;
@@ -127,6 +151,27 @@ const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
     }
   }, [values, schema.fields, dictById, apiDictLoader]);
 
+  // «Совпадает с…»: while the checkbox is ON, keep its target field synced to
+  // the source field's value.
+  useEffect(() => {
+    const patch: Record<string, any> = {};
+    for (const f of schema.fields) {
+      if (f.type === 'same_as' && values[f.id] && f.sameAs?.target && f.sameAs?.source) {
+        if (values[f.sameAs.target] !== values[f.sameAs.source]) patch[f.sameAs.target] = values[f.sameAs.source];
+      }
+    }
+    if (Object.keys(patch).length) setValues((v) => ({ ...v, ...patch }));
+  }, [values, schema.fields]);
+
+  // Target fields of a checked «Совпадает с…» are hidden (value comes from source).
+  const hiddenBySameAs = useMemo(() => {
+    const s = new Set<string>();
+    for (const f of schema.fields) {
+      if (f.type === 'same_as' && values[f.id] && f.sameAs?.target) s.add(f.sameAs.target);
+    }
+    return s;
+  }, [values, schema.fields]);
+
   const setValue = (field: Field, v: any) => {
     const nextVals = { ...values, [field.id]: v };
     for (const f of schema.fields) {
@@ -140,7 +185,7 @@ const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
     onChange?.(field.id, v, nextVals);
   };
 
-  const isVisible = (f: Field) => evalCondition(f.visibleIf, computed);
+  const isVisible = (f: Field) => !hiddenBySameAs.has(f.id) && evalCondition(f.visibleIf, computed);
   const isRequired = (f: Field) => !!f.required || (!!f.requiredIf && evalCondition(f.requiredIf, computed));
 
   function validateField(f: Field): string {
@@ -326,6 +371,98 @@ const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
     );
   }
 
+  function digPath(obj: any, path: string): any {
+    return (path || '').split('.').filter(Boolean).reduce((n, k) => (n == null ? n : n[k]), obj);
+  }
+
+  // Templates and fill-paths are resolved against the RAW API element (item.data),
+  // exactly like «Сохранить»/«Показать» (valueField/labelField). So {{data.inn}}
+  // for DaData means item.data.data.inn — same path the constructor's «Тест» shows.
+  function fillTemplate(tpl: string, raw: any): string {
+    return (tpl || '').replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_m, p) => {
+      const val = digPath(raw, p);
+      return val == null ? '' : String(val);
+    })
+      // Tidy up separators around parts that resolved to empty.
+      .replace(/,\s*,/g, ', ')
+      .replace(/·\s*·/g, '·')
+      .replace(/^[\s,·]+|[\s,·]+$/g, '')
+      .trim();
+  }
+
+  function suggestControl(f: Field) {
+    const cfg = f.suggest || {};
+    const min = cfg.minChars ?? 3;
+    const v = values[f.id];
+    const busy = !!suggestBusy[f.id];
+    const opts = (suggestOpts[f.id] || []).map((it) => {
+      const primary = cfg.labelTemplate ? fillTemplate(cfg.labelTemplate, it.data) : it.label;
+      const subtitle = cfg.subtitleTemplate ? fillTemplate(cfg.subtitleTemplate, it.data) : '';
+      return {
+        value: it.value,
+        item: it,
+        label: subtitle
+          ? (
+            <div>
+              <div>{primary}</div>
+              <div style={{ fontSize: 12, color: '#8c8c8c', lineHeight: 1.3 }}>{subtitle}</div>
+            </div>
+          )
+          : primary,
+      };
+    });
+
+    const doSearch = (text: string) => {
+      const q = (text || '').trim();
+      if (!suggestLoader || q.length < min) {
+        setSuggestOpts((p) => ({ ...p, [f.id]: [] }));
+        return;
+      }
+      if (suggestTimers.current[f.id]) clearTimeout(suggestTimers.current[f.id]);
+      suggestTimers.current[f.id] = setTimeout(() => {
+        setSuggestBusy((p) => ({ ...p, [f.id]: true }));
+        suggestLoader(f, q, values)
+          .then((items) => setSuggestOpts((p) => ({ ...p, [f.id]: items })))
+          .catch(() => setSuggestOpts((p) => ({ ...p, [f.id]: [] })))
+          .finally(() => setSuggestBusy((p) => ({ ...p, [f.id]: false })));
+      }, 300);
+    };
+
+    return wrap(
+      f,
+      <AutoComplete
+        style={{ width: '100%' }}
+        value={v}
+        options={opts}
+        optionLabelProp="value"
+        onSearch={doSearch}
+        onChange={(val) => setValue(f, val)}
+        onSelect={(val, option: any) => {
+          // Store the picked value and auto-fill related fields from its data.
+          const item: SuggestItem | undefined = option?.item;
+          const patch: Record<string, any> = { [f.id]: val };
+          if (item && cfg.fill?.length) {
+            for (const fm of cfg.fill) {
+              if (!fm.fieldId) continue;
+              // A {{...}} value is a template (combine several parts); otherwise a single path.
+              patch[fm.fieldId] = /\{\{/.test(fm.from || '')
+                ? fillTemplate(fm.from, item.data)
+                : digPath(item.data, fm.from);
+            }
+          }
+          const nextVals = { ...values, ...patch };
+          setValues(nextVals);
+          Object.keys(patch).forEach((k) => setErrors((e) => ({ ...e, [k]: '' })));
+          onChange?.(f.id, val, nextVals);
+        }}
+        placeholder={f.placeholder || 'Начните вводить…'}
+        filterOption={false}
+        notFoundContent={busy ? <Spin size="small" /> : null}
+        allowClear
+      />,
+    );
+  }
+
   function fileControl(f: Field) {
     const fileList = (values[f.id] || []).map((x: any, i: number) => ({ uid: String(i), name: x.filename, url: x.url, status: 'done' }));
     return wrap(
@@ -359,16 +496,16 @@ const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
     const v = values[f.id];
     switch (f.type) {
       case 'section_header':
-        return <Title level={4} style={{ marginBottom: 0, marginTop: 8 }}>{f.label}</Title>;
+        return <Title level={f.headingLevel || 3} style={{ marginBottom: 0, marginTop: 8 }}>{f.label}</Title>;
       case 'divider':
         return <div style={{ borderTop: '1px solid #eee', margin: '8px 0' }} />;
       case 'info_text':
         return <Paragraph type="secondary" style={{ marginBottom: 0 }}>{f.label}</Paragraph>;
       case 'textarea':
-        return wrap(f, <Input.TextArea rows={f.rows || 3} placeholder={f.placeholder || ''} value={v} onChange={(e) => setValue(f, e.target.value)} />);
+        return wrap(f, <Input.TextArea rows={f.rows || 3} placeholder={f.placeholder || ''} value={v} readOnly={f.readOnly} onChange={(e) => setValue(f, e.target.value)} />);
       case 'number':
       case 'amount':
-        return wrap(f, <InputNumber style={{ width: '100%' }} value={v} min={f.validation?.min} max={f.validation?.max} step={f.validation?.step} onChange={(x) => setValue(f, x)} addonAfter={f.type === 'amount' ? '₽' : undefined} />);
+        return wrap(f, <InputNumber style={{ width: '100%' }} value={v} readOnly={f.readOnly} min={f.validation?.min} max={f.validation?.max} step={f.validation?.step} onChange={(x) => setValue(f, x)} addonAfter={f.type === 'amount' ? '₽' : undefined} />);
       case 'calculated': {
         const num = Number(computed[f.id] || 0);
         const text = `${f.calcPrefix || ''}${num.toFixed(f.calcDecimals ?? 2)}${f.calcSuffix || ''}`;
@@ -388,6 +525,12 @@ const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
           <div>
             <Checkbox checked={!!v} onChange={(e) => setValue(f, e.target.checked)}>{f.label}{isRequired(f) && <span style={{ color: '#ff4d4f' }}> *</span>}</Checkbox>
             {errors[f.id] && <div style={{ color: '#ff4d4f', fontSize: 12 }}>{errors[f.id]}</div>}
+          </div>
+        );
+      case 'same_as':
+        return (
+          <div>
+            <Checkbox checked={!!v} onChange={(e) => setValue(f, e.target.checked)}>{f.label}</Checkbox>
           </div>
         );
       case 'toggle':
@@ -415,6 +558,8 @@ const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
       case 'dict_radio':
       case 'dict_checkbox':
         return dictControl(f);
+      case 'suggest':
+        return suggestControl(f);
       case 'file':
       case 'image':
         return fileControl(f);
@@ -428,6 +573,7 @@ const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
           <Comp
             placeholder={f.placeholder || ''}
             value={v}
+            readOnly={f.readOnly}
             inputMode={preset && preset !== 'phone' ? 'numeric' : undefined}
             onChange={(e: any) => setValue(f, preset || f.mask?.pattern ? maskValue(f.type, f.mask?.pattern, preset, e.target.value) : e.target.value)}
           />,

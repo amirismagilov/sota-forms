@@ -3,7 +3,7 @@ import type Entity from '@ant-design/cssinjs/es/Cache';
 import { App as AntApp, ConfigProvider } from 'antd';
 import { forwardRef } from 'react';
 import FormRenderer, { type FormHandle } from '../renderer/FormRenderer';
-import type { Dictionary, FormSchema } from '../types';
+import type { Dictionary, Field, FormSchema } from '../types';
 
 interface Props {
   schema: Pick<FormSchema, 'fields' | 'grid_columns' | 'submit' | 'title'>;
@@ -15,6 +15,7 @@ interface Props {
   onChange?: (field: string, value: any, all: Record<string, any>) => void;
   onError?: (errors: Record<string, string>) => void;
   apiDictLoader?: (dictId: string, values: Record<string, any>) => Promise<{ code: string; label: string; attrs?: any }[]>;
+  suggestLoader?: (field: Field, query: string, values: Record<string, any>) => Promise<{ value: string; label: string; data: any }[]>;
   fileUpload?: (file: File) => Promise<{ id: string; url: string; filename: string; size: number }>;
   showTitle?: boolean;
 }
@@ -22,7 +23,7 @@ interface Props {
 /** Ant Design form wrapped in a theme provider; style-isolated when a
  *  shadow-root container + cache are supplied (Web Component use, KP-10). */
 const ThemedForm = forwardRef<FormHandle, Props>(function ThemedForm(
-  { schema, dictionaries, tokens, container, cache, onSubmit, onChange, onError, apiDictLoader, fileUpload, showTitle },
+  { schema, dictionaries, tokens, container, cache, onSubmit, onChange, onError, apiDictLoader, suggestLoader, fileUpload, showTitle },
   ref,
 ) {
   const inner = (
@@ -36,6 +37,7 @@ const ThemedForm = forwardRef<FormHandle, Props>(function ThemedForm(
           onChange={onChange}
           onError={onError}
           apiDictLoader={apiDictLoader}
+          suggestLoader={suggestLoader}
           fileUpload={fileUpload}
           showTitle={showTitle}
         />

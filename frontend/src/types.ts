@@ -49,6 +49,8 @@ export interface Field {
   hint?: string | null;
   tooltip?: string | null;
   required?: boolean;
+  readOnly?: boolean;
+  defaultValue?: any;
   requiredMessage?: string | null;
   mask?: FieldMask;
   validation?: FieldValidation;
@@ -63,9 +65,39 @@ export interface Field {
   visibleIf?: Condition;
   requiredIf?: Condition;
   rows?: number;
+  headingLevel?: 1 | 2 | 3;
   fileValidation?: FileValidation;
+  suggest?: SuggestConfig;
+  // «Совпадает с…» checkbox: when ON, `target` field is hidden and auto-filled
+  // from `source` field.
+  sameAs?: { target?: string; source?: string };
   // Visual grid placement (set by the layout editor). x/w in columns, y/h in rows.
   layout?: { x: number; y: number; w: number; h: number };
+}
+
+// Auto-fill another form field from the selected suggestion's data.
+export interface SuggestFill {
+  fieldId: string;   // which form field to fill
+  from: string;      // dot-path into the picked item, e.g. "data.inn" or "value"
+}
+
+// Server-side typeahead field (DaData and any other REST/suggest API).
+export interface SuggestConfig {
+  connectionId?: string;
+  method?: 'GET' | 'POST';
+  endpoint?: string;      // e.g. /suggest/address, /suggest/party
+  queryParam?: string;    // param carrying the typed text (DaData: "query")
+  params?: string;        // extra static params as JSON, {{field}} supported
+  minChars?: number;      // start querying from N chars (default 3)
+  path?: string;          // where the array is in the response (DaData: "suggestions")
+  labelField?: string;    // shown in the dropdown (DaData: "value")
+  valueField?: string;    // stored in the form (DaData: "value" or "data.fias_id")
+  // Rich dropdown display. {{path}} pulls from the item (value/label/data.*).
+  // labelTemplate is the primary line (falls back to labelField), subtitleTemplate
+  // renders a smaller grey second line, e.g. "ИНН {{data.inn}} · {{data.address.value}}".
+  labelTemplate?: string;
+  subtitleTemplate?: string;
+  fill?: SuggestFill[];   // auto-fill other fields on select
 }
 
 export interface DictAttr {

@@ -84,7 +84,7 @@ export interface ConnectionTestResult {
   url: string;
   message: string;
 }
-export const testConnection = (id: string, body: { endpoint?: string; method?: string } = {}) =>
+export const testConnection = (id: string, body: { endpoint?: string; method?: string; body?: any } = {}) =>
   api.post<ConnectionTestResult>(`/connections/${id}/test`, body).then((r) => r.data);
 
 // ---- Theme ----
@@ -111,6 +111,12 @@ export const getDictOptions = (dictId: string, values: Record<string, any>) =>
   api.post(`/public/dictionaries/${dictId}/options`, { values }).then((r) => r.data.items as { code: string; label: string; attrs?: any }[]);
 export const testDictionary = (dictId: string, values: Record<string, any>) =>
   api.post(`/dictionaries/${dictId}/test`, { values }).then((r) => r.data);
+// Probe an unsaved API config so the constructor can show the response before saving.
+export const probeDictionary = (body: { api_config: any; dependencies?: any[]; values?: Record<string, any> }) =>
+  api.post('/dictionaries/probe', body).then((r) => r.data);
+// Suggest typeahead against an inline (unsaved) field config — preview + field-editor test.
+export const probeSuggest = (body: { suggest: any; query: string; values?: Record<string, any> }) =>
+  api.post('/suggest/probe', body).then((r) => r.data as { ok: boolean; items?: { value: string; label: string; data: any }[]; raw?: any; error?: string });
 export const uploadFile = (file: File) => {
   const fd = new FormData();
   fd.append('file', file);

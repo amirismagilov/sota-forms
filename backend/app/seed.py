@@ -20,7 +20,11 @@ MOCK_EXT_BASE = get_settings().mock_ext_base
 async def seed_if_empty() -> None:
     async with SessionLocal() as db:
         acc = await db.get(Account, DEMO_ACCOUNT_ID)
-        if acc is None:
+        # Content is seeded EXACTLY ONCE — on first ever run (when the demo account
+        # is created). After that we never re-seed, so deleting the demo form/dicts
+        # (or editing connections) STICKS and is never silently recreated on restart.
+        first_run = acc is None
+        if first_run:
             acc = Account(
                 id=DEMO_ACCOUNT_ID,
                 name="Demo Account",
@@ -30,7 +34,7 @@ async def seed_if_empty() -> None:
             db.add(acc)
             await db.flush()
 
-        # Demo login owning the demo account.
+        # Demo login owning the demo account (ensured even on later runs).
         demo_user = (await db.execute(select(User).where(User.email == DEMO_EMAIL))).scalar_one_or_none()
         if demo_user is None:
             db.add(User(
@@ -39,12 +43,10 @@ async def seed_if_empty() -> None:
                 account_id=DEMO_ACCOUNT_ID,
                 role="owner",
             ))
+            await db.commit()
 
-        existing_forms = (
-            await db.execute(select(Form).where(Form.account_id == DEMO_ACCOUNT_ID))
-        ).scalars().first()
-        if existing_forms:
-            return  # already seeded
+        if not first_run:
+            return  # already seeded once — respect the user's data, never recreate
 
         # --- Dictionaries -------------------------------------------------
         regions = Dictionary(
@@ -102,6 +104,27 @@ async def seed_if_empty() -> None:
             auth_config={},
             whitelist=[],
         )
+        # DaData suggestions — connection shell WITHOUT the secret. Structure is
+        # restored on any reset; the user pastes their API key once.
+        dadata_conn = Connection(
+            id="conn_dadata",
+            account_id=DEMO_ACCOUNT_ID,
+            name="DaData Suggestions",
+            base_url="https://suggestions.dadata.ru/suggestions/api/4_1/rs",
+            auth_type="apikey_header",
+            auth_config={"headerName": "Authorization"},
+            whitelist=["^/suggest/.*"],
+        )
+        # Leasing-broker partner API (local mock).
+        broker_conn = Connection(
+            id="conn_broker",
+            account_id=DEMO_ACCOUNT_ID,
+            name="Брокер лизинга (mock)",
+            base_url=MOCK_EXT_BASE.rsplit("/", 1)[0] + "/broker",
+            auth_type="none",
+            auth_config={},
+            whitelist=["^/api/.*"],
+        )
         products = Dictionary(
             id="dict_products",
             account_id=DEMO_ACCOUNT_ID,
@@ -127,7 +150,7 @@ async def seed_if_empty() -> None:
                 "refresh": "hourly",
             },
         )
-        db.add_all([regions, delivery, tariffs, catalog_conn, products])
+        db.add_all([regions, delivery, tariffs, catalog_conn, dadata_conn, broker_conn, products])
 
         # --- Demo form ----------------------------------------------------
         fields = [

@@ -35,6 +35,8 @@ class ConnectionTestIn(BaseModel):
     # Optional path appended to base_url; empty = probe the base URL itself.
     endpoint: str = ""
     method: str = "GET"
+    # Optional JSON body for non-GET probes (e.g. DaData /suggest/address).
+    body: dict | None = None
 
 
 class ConnectionTestResult(BaseModel):
