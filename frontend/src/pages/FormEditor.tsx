@@ -79,7 +79,10 @@ export default function FormEditor() {
 
   if (!form) return <Card loading />;
 
-  const otherFields = form.fields.filter((_, i) => i !== editIndex);
+  // Exclude the field being edited BY ID (index-based filtering broke when the
+  // field's position didn't match editIndex, letting a field reference itself).
+  const currentFieldId = editIndex !== null ? form.fields[editIndex]?.id : null;
+  const otherFields = form.fields.filter((f) => f.id !== currentFieldId);
 
   function openEditor(index: number | null) {
     if (index === null) {
@@ -623,7 +626,9 @@ function ConditionEditor({ prefix, fields, form }: { prefix: string; fields: Fie
     <Row gutter={8} style={{ marginBottom: 8 }}>
       <Col span={9}>
         <AntForm.Item name={[prefix, 'fieldId']} noStyle>
-          <Select allowClear placeholder="поле" options={fields.map((f) => ({ label: f.id, value: f.id }))} style={{ width: '100%' }} />
+          <Select allowClear showSearch optionFilterProp="label" placeholder="поле"
+            options={fields.filter((f) => !['section_header', 'divider', 'info_text'].includes(f.type)).map((f) => ({ label: `${f.label} (${f.id})`, value: f.id }))}
+            style={{ width: '100%' }} />
         </AntForm.Item>
       </Col>
       <Col span={7}>
