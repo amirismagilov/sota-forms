@@ -355,18 +355,31 @@ export default function Dictionaries() {
 
           <Typography.Text strong>Зависимость (каскад) <Tag>необязательно</Tag></Typography.Text>
           <Typography.Paragraph type="secondary" style={{ fontSize: 12, margin: '2px 0 6px' }}>
-            Список зависит от значения другого поля формы. Для простого справочника не нужно.
+            Нужно, только если этот список должен <b>меняться в зависимости от другого поля</b> (регион → город).
+            Чтобы просто <b>показать поле при выборе варианта</b> — это не сюда, а в настройке поля формы → «Условие видимости».
           </Typography.Paragraph>
           <AntForm.List name="dependencies">
             {(fields, { add, remove }) => (
               <div style={{ marginBottom: 12 }}>
                 {fields.map((f) => (
                   <Space key={f.key} align="baseline" style={{ display: 'flex', marginTop: 4 }}>
-                    <AntForm.Item {...f} name={[f.name, 'fieldId']} noStyle><Input placeholder="id родительского поля (напр. f_region)" style={{ width: 260 }} /></AntForm.Item>
-                    <AntForm.Item {...f} name={[f.name, 'paramName']} noStyle><Input placeholder="имя параметра" /></AntForm.Item>
+                    <AntForm.Item {...f} name={[f.name, 'fieldId']} noStyle>
+                      <Input placeholder="ID родительского поля" style={{ width: type === 'api' ? 240 : 320 }} />
+                    </AntForm.Item>
+                    {type === 'api' && (
+                      <AntForm.Item {...f} name={[f.name, 'paramName']} noStyle>
+                        <Input placeholder="query-параметр для API" style={{ width: 200 }} />
+                      </AntForm.Item>
+                    )}
                     <DeleteOutlined onClick={() => remove(f.name)} />
                   </Space>
                 ))}
+                {fields.length > 0 && (
+                  <Typography.Paragraph type="secondary" style={{ fontSize: 11, margin: '6px 0 0' }}>
+                    Где взять <b>ID родительского поля</b>: в конструкторе формы кликни по нужному полю → «Настройка поля» → строка «ID поля» (напр. <code>f_region</code>).
+                    {type !== 'api' && ' Также у значений этого справочника заполни колонку «parent» — код родительского значения, к которому относится вариант.'}
+                  </Typography.Paragraph>
+                )}
                 <Button size="small" icon={<PlusOutlined />} onClick={() => add()} style={{ marginTop: 4 }}>Зависимость</Button>
               </div>
             )}
