@@ -217,6 +217,9 @@ export default function FormEditor() {
             value={leftView}
             onChange={(v) => {
               if (v === 'layout') setForm({ ...form, fields: ensureLayout(form.fields, form.grid_columns) });
+              // Leaving layout → reorder the field array to match the arrangement
+              // (top→bottom, left→right), so the «Поля» list matches the preview.
+              if (v === 'fields') setForm({ ...form, fields: sortByLayout(form.fields) });
               setLeftView(v as 'fields' | 'layout');
             }}
             options={[
@@ -665,6 +668,23 @@ function FieldChips({ fields, dicts, onInsert }: { fields: Field[]; dicts: Dicti
 }
 
 // ---- field <-> form mapping ----
+// Reorder fields to match the visual grid arrangement (row y, then column x),
+// stable on original position for ties / fields without layout.
+function sortByLayout(fields: Field[]): Field[] {
+  return fields
+    .map((f, i) => ({ f, i }))
+    .sort((a, b) => {
+      const ay = a.f.layout?.y ?? a.i;
+      const by = b.f.layout?.y ?? b.i;
+      if (ay !== by) return ay - by;
+      const ax = a.f.layout?.x ?? 0;
+      const bx = b.f.layout?.x ?? 0;
+      if (ax !== bx) return ax - bx;
+      return a.i - b.i;
+    })
+    .map((x) => x.f);
+}
+
 function fieldToForm(f: Field): any {
   return {
     ...f,
