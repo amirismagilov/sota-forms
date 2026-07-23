@@ -4,6 +4,7 @@ import { createRef } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import type { FormHandle } from '../renderer/FormRenderer';
 import type { PublicForm } from '../types';
+import montserratCss from './montserratCss';
 import ThemedForm from './ThemedForm';
 
 // Default API base = origin the widget script was served from (so an external
@@ -17,6 +18,17 @@ function scriptApiBase(): string {
   return '/api';
 }
 const DEFAULT_API_BASE = scriptApiBase();
+
+// Origin, откуда отдан widget-скрипт — им префиксуем пути к самохост-шрифту,
+// иначе в shadow-DOM на чужой странице url(/fonts/…) резолвится к её origin.
+function scriptOrigin(): string {
+  try {
+    const src = (document.currentScript as HTMLScriptElement | null)?.src;
+    if (src) return new URL(src).origin;
+  } catch { /* ignore */ }
+  return '';
+}
+const SCRIPT_ORIGIN = scriptOrigin();
 
 /**
  * <no-code-form form-id="order_form"></no-code-form>
@@ -56,6 +68,10 @@ class NoCodeForm extends HTMLElement {
     const formId = this.getAttribute('form-id');
     const mount = document.createElement('div');
     this.shadow.innerHTML = '';
+    // Самохост-шрифт (Montserrat) внутрь shadow-DOM с origin виджета.
+    const fontStyle = document.createElement('style');
+    fontStyle.textContent = montserratCss.replace(/url\(\/fonts\//g, `url(${SCRIPT_ORIGIN}/fonts/`);
+    this.shadow.appendChild(fontStyle);
     this.shadow.appendChild(mount);
     const cache = createCache();
     const api = this.apiBase();

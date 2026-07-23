@@ -21,9 +21,10 @@ import {
   Upload,
   message,
 } from 'antd';
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import { cloneElement, forwardRef, isValidElement, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import type { Dictionary, Field, FormSchema } from '../types';
 import { dictItemsFor, evalCondition, evalFormula } from './engine';
+import FloatingField from './FloatingField';
 import { maskValue } from './masks';
 import SignaturePad from './SignaturePad';
 import { validateFileMeta, validateImageDims } from './validateFile';
@@ -32,6 +33,13 @@ const { Title, Paragraph } = Typography;
 
 const LAYOUT = ['section_header', 'divider', 'info_text'];
 const FULL_WIDTH = [...LAYOUT, 'textarea', 'calculated', 'signature'];
+// Поля с плавающим лейблом (стиль референса). Остальные (checkbox, radio,
+// slider, switch, rating, color, file, signature) — с лейблом сверху.
+const FLOAT_LABEL = new Set([
+  'text', 'email', 'phone', 'url', 'password', 'inn', 'snils', 'passport',
+  'bik', 'kpp', 'ogrn', 'card', 'number', 'amount', 'textarea',
+  'select_static', 'dict_select', 'suggest', 'date', 'datetime', 'time',
+]);
 
 export interface FormHandle {
   getValues: () => Record<string, any>;
@@ -327,13 +335,39 @@ const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
     );
   }
 
-  function wrap(f: Field, control: React.ReactNode) {
+  function wrap(f: Field, control: React.ReactNode, floating = FLOAT_LABEL.has(f.type)) {
+    const v = values[f.id];
+    const filled = v !== undefined && v !== null && v !== '' && !(Array.isArray(v) && v.length === 0);
+    let body: React.ReactNode;
+    if (floating && f.label) {
+      // Лейбл заменяет placeholder — глушим нативный (пробел, чтобы antd не показал свой дефолт).
+      const ctrl = isValidElement(control) ? cloneElement(control as any, { placeholder: ' ' }) : control;
+      body = (
+        <FloatingField
+          active={filled}
+          label={
+            <>
+              {f.label}
+              {isRequired(f) && <span style={{ color: '#ff4d4f' }}> *</span>}
+            </>
+          }
+        >
+          {ctrl}
+        </FloatingField>
+      );
+    } else {
+      body = (
+        <>
+          <div style={{ marginBottom: 4 }}>{label(f)}</div>
+          {control}
+        </>
+      );
+    }
     return (
       <div>
-        <div style={{ marginBottom: 4 }}>{label(f)}</div>
-        {control}
+        {body}
         {f.hint && <div style={{ color: '#888', fontSize: 12, marginTop: 2 }}>{f.hint}</div>}
-        {errors[f.id] && <div style={{ color: '#ff4d4f', fontSize: 12, marginTop: 2 }}>{errors[f.id]}</div>}
+        {errors[f.id] && <div style={{ color: '#ff5028', fontSize: 12, marginTop: 4 }}>{errors[f.id]}</div>}
         {f.showExtra && attrs[f.id] && (
           <Descriptions size="small" column={1} bordered style={{ marginTop: 8 }}>
             {Object.entries(attrs[f.id]).map(([k, val]) => (
@@ -351,9 +385,9 @@ const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
     const v = values[f.id];
     const display = f.dictDisplay || (f.type === 'dict_radio' ? 'radio' : f.type === 'dict_checkbox' ? 'checkbox' : 'select');
     if (display === 'radio')
-      return wrap(f, <Radio.Group value={v} onChange={(e) => setValue(f, e.target.value)}>{opts.map((o) => <Radio key={o.value} value={o.value}>{o.label}</Radio>)}</Radio.Group>);
+      return wrap(f, <Radio.Group value={v} onChange={(e) => setValue(f, e.target.value)}>{opts.map((o) => <Radio key={o.value} value={o.value}>{o.label}</Radio>)}</Radio.Group>, false);
     if (display === 'checkbox')
-      return wrap(f, <Checkbox.Group value={v} options={opts} onChange={(x) => setValue(f, x)} />);
+      return wrap(f, <Checkbox.Group value={v} options={opts} onChange={(x) => setValue(f, x)} />, false);
     return wrap(
       f,
       <Select

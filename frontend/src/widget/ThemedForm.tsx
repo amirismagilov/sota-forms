@@ -3,6 +3,7 @@ import type Entity from '@ant-design/cssinjs/es/Cache';
 import { App as AntApp, ConfigProvider } from 'antd';
 import { forwardRef } from 'react';
 import FormRenderer, { type FormHandle } from '../renderer/FormRenderer';
+import { componentsTheme, tokenTheme } from '../theme';
 import type { Dictionary, Field, FormSchema } from '../types';
 
 interface Props {
@@ -27,7 +28,10 @@ const ThemedForm = forwardRef<FormHandle, Props>(function ThemedForm(
   ref,
 ) {
   const inner = (
-    <ConfigProvider theme={{ token: tokens?.token || {} }} getPopupContainer={() => container || document.body}>
+    <ConfigProvider
+      theme={{ token: { ...tokenTheme, ...(tokens?.token || {}) }, components: componentsTheme }}
+      getPopupContainer={() => container || document.body}
+    >
       <AntApp>
         <FormRenderer
           ref={ref}
