@@ -457,7 +457,7 @@ const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
     const v = values[f.id];
     switch (f.type) {
       case 'section_header':
-        return <Title level={4} style={{ marginBottom: 0, marginTop: 8 }}>{f.label}</Title>;
+        return <Title level={f.headingLevel || 3} style={{ marginBottom: 0, marginTop: 8 }}>{f.label}</Title>;
       case 'divider':
         return <div style={{ borderTop: '1px solid #eee', margin: '8px 0' }} />;
       case 'info_text':

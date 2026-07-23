@@ -304,6 +304,11 @@ export default function FormEditor() {
           <AntForm.Item name="label" label={LAYOUT_TYPES.includes(editType) ? 'Текст' : 'Заголовок'} rules={[{ required: true }]}>
             <Input />
           </AntForm.Item>
+          {editType === 'section_header' && (
+            <AntForm.Item name="headingLevel" label="Уровень заголовка" initialValue={3}>
+              <Select options={[{ label: 'H1 — крупный', value: 1 }, { label: 'H2 — средний', value: 2 }, { label: 'H3 — обычный', value: 3 }]} />
+            </AntForm.Item>
+          )}
           <AntForm.Item name="id" label="ID поля">
             <Input />
           </AntForm.Item>

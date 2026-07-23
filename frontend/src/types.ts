@@ -64,6 +64,7 @@ export interface Field {
   visibleIf?: Condition;
   requiredIf?: Condition;
   rows?: number;
+  headingLevel?: 1 | 2 | 3;
   fileValidation?: FileValidation;
   suggest?: SuggestConfig;
   // Visual grid placement (set by the layout editor). x/w in columns, y/h in rows.
