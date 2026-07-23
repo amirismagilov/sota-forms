@@ -76,6 +76,16 @@ export const updateConnection = (id: string, body: Partial<Connection>) =>
   api.put<Connection>(`/connections/${id}`, body).then((r) => r.data);
 export const deleteConnection = (id: string) =>
   api.delete(`/connections/${id}`).then((r) => r.data);
+export interface ConnectionTestResult {
+  ok: boolean;
+  reachable: boolean;
+  status: number | null;
+  latency_ms: number | null;
+  url: string;
+  message: string;
+}
+export const testConnection = (id: string, body: { endpoint?: string; method?: string } = {}) =>
+  api.post<ConnectionTestResult>(`/connections/${id}/test`, body).then((r) => r.data);
 
 // ---- Theme ----
 export const getTheme = () => api.get('/account/theme').then((r) => r.data);

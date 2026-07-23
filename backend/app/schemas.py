@@ -31,6 +31,21 @@ class ConnectionOut(BaseModel):
     env: str
 
 
+class ConnectionTestIn(BaseModel):
+    # Optional path appended to base_url; empty = probe the base URL itself.
+    endpoint: str = ""
+    method: str = "GET"
+
+
+class ConnectionTestResult(BaseModel):
+    ok: bool          # got a non-error HTTP response (< 400)
+    reachable: bool   # the host answered at all (even with a 4xx/5xx)
+    status: int | None = None
+    latency_ms: int | None = None
+    url: str
+    message: str
+
+
 # ---- Dictionaries ----
 class DictionaryIn(BaseModel):
     code: str

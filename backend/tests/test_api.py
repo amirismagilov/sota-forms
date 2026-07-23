@@ -70,6 +70,44 @@ async def test_connection_secret_never_returned_in_cleartext(client):
     assert "SUPER_SECRET_TOKEN" not in listing.text
 
 
+async def test_connection_update_preserves_secret_when_token_omitted(client):
+    # The editor leaves the password field empty ("keep the stored secret"),
+    # so the frontend sends auth_config WITHOUT a token. The stored secret must
+    # survive the update.
+    created = await client.post(
+        "/api/connections",
+        json={
+            "name": "DaData",
+            "base_url": "https://suggestions.dadata.ru",
+            "auth_type": "apikey_header",
+            "auth_config": {"headerName": "Authorization", "token": "ORIGINAL_TOKEN"},
+        },
+    )
+    cid = created.json()["id"]
+
+    upd = await client.put(
+        f"/api/connections/{cid}",
+        json={
+            "name": "DaData renamed",
+            "base_url": "https://suggestions.dadata.ru",
+            "auth_type": "apikey_header",
+            "auth_config": {"headerName": "Authorization"},  # no token → keep it
+        },
+    )
+    assert upd.status_code == 200
+    body = upd.json()
+    assert body["name"] == "DaData renamed"
+    # Secret is still present (redacted marker), not wiped.
+    assert body["auth_config"]["token"] == "__set__"
+    listing = await client.get("/api/connections")
+    assert "ORIGINAL_TOKEN" not in listing.text
+
+
+async def test_connection_test_endpoint_unknown_id_is_404(client):
+    r = await client.post("/api/connections/conn_does_not_exist/test", json={})
+    assert r.status_code == 404
+
+
 async def test_file_upload_and_retrieve(client):
     files = {"file": ("hello.txt", b"hello world", "text/plain")}
     up = await client.post("/api/public/files", files=files)

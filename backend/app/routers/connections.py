@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import time
+
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,7 +11,8 @@ from ..auth import require_account
 from ..crypto import encrypt_auth_config, redact_auth_config
 from ..db import get_db
 from ..models import Connection
-from ..schemas import ConnectionIn, ConnectionOut
+from ..proxy_client import _apply_auth
+from ..schemas import ConnectionIn, ConnectionOut, ConnectionTestIn, ConnectionTestResult
 
 router = APIRouter(prefix="/api/connections", tags=["connections"])
 
@@ -77,6 +81,65 @@ async def update_connection(conn_id: str, body: ConnectionIn, db: AsyncSession =
     await db.commit()
     await db.refresh(c)
     return _out(c)
+
+
+@router.post("/{conn_id}/test", response_model=ConnectionTestResult)
+async def test_connection(
+    conn_id: str,
+    body: ConnectionTestIn | None = None,
+    db: AsyncSession = Depends(get_db),
+    aid: str = Depends(require_account),
+):
+    """Probe a stored connection so the admin can see if it works.
+
+    Secrets are injected server-side (never returned). This is an
+    admin-initiated reachability check, so the path whitelist is not applied —
+    an empty endpoint simply probes the configured base URL. Connection-level
+    failures (DNS/TLS/timeout) are reported as a result, not raised.
+    """
+    body = body or ConnectionTestIn()
+    c = await db.get(Connection, conn_id)
+    if not c or c.account_id != aid:
+        raise HTTPException(404, "connection not found")
+
+    endpoint = (body.endpoint or "").strip()
+    url = c.base_url.rstrip("/")
+    if endpoint:
+        url = url + "/" + endpoint.lstrip("/")
+
+    headers: dict[str, str] = {}
+    query: dict[str, str] = {}
+    _apply_auth(c, headers, query)
+
+    timeout = (c.timeout or 5000) / 1000
+    start = time.monotonic()
+    try:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            resp = await client.request(
+                (body.method or "GET").upper(), url, headers=headers, params=query
+            )
+        latency = int((time.monotonic() - start) * 1000)
+        reason = resp.reason_phrase or ""
+        return ConnectionTestResult(
+            ok=resp.status_code < 400,
+            reachable=True,
+            status=resp.status_code,
+            latency_ms=latency,
+            url=url,
+            message=f"HTTP {resp.status_code} {reason}".strip(),
+        )
+    except httpx.TimeoutException:
+        latency = int((time.monotonic() - start) * 1000)
+        return ConnectionTestResult(
+            ok=False, reachable=False, latency_ms=latency, url=url,
+            message=f"Таймаут ({c.timeout or 5000} мс)",
+        )
+    except Exception as exc:
+        latency = int((time.monotonic() - start) * 1000)
+        return ConnectionTestResult(
+            ok=False, reachable=False, latency_ms=latency, url=url,
+            message=f"Не удалось подключиться: {exc}",
+        )
 
 
 @router.delete("/{conn_id}")
