@@ -30,8 +30,9 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+    # Host port is configurable to avoid clashes: API_PORT=8010 docker compose up
     ports:
-      - "8000:8000"
+      - "${API_PORT:-8000}:8000"
 
   worker:
     build: ./backend
@@ -51,8 +52,9 @@ services:
       BACKEND_URL: http://backend:8000
     depends_on:
       - backend
+    # Configurable too: WEB_PORT=5180 docker compose up
     ports:
-      - "5173:5173"
+      - "${WEB_PORT:-5173}:5173"
 
 volumes:
   pgdata:
