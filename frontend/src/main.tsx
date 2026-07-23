@@ -6,6 +6,7 @@ import { BrowserRouter } from 'react-router-dom';
 import App from './App';
 import { type AuthUser, clearToken, getTheme, getToken, me } from './api';
 import Login from './pages/Login';
+import { componentsTheme, tokenTheme } from './theme';
 import './widget/webcomponent'; // registers <no-code-form> for the Embed demo
 
 function Root() {
@@ -34,7 +35,10 @@ function Root() {
   const body = !ready ? null : user ? <App user={user} onLogout={() => { clearToken(); setUser(null); }} /> : <Login onAuthed={setUser} />;
 
   return (
-    <ConfigProvider locale={ruRU} theme={{ token: user ? tokens : {} }}>
+    <ConfigProvider
+      locale={ruRU}
+      theme={{ token: { ...tokenTheme, ...(user ? tokens : {}) }, components: componentsTheme }}
+    >
       <AntApp>
         <BrowserRouter>{body}</BrowserRouter>
       </AntApp>
