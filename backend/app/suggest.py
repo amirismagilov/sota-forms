@@ -55,7 +55,7 @@ async def resolve_suggest(
 ) -> tuple[object, list[dict]]:
     """Run one suggest query. Returns (raw_response, items[{value,label,data}])."""
     method = (cfg.get("method") or "POST").upper()
-    endpoint = _substitute(cfg.get("endpoint", ""), values)
+    endpoint = _substitute((cfg.get("endpoint") or "").strip(), values)
     params = _build_params(cfg, query, values)
 
     raw = await run_proxy_request(
