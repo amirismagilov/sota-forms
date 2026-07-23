@@ -1,6 +1,7 @@
 import { QuestionCircleOutlined, UploadOutlined } from '@ant-design/icons';
 import {
   Alert,
+  AutoComplete,
   Button,
   Checkbox,
   ColorPicker,
@@ -48,13 +49,15 @@ interface Props {
   onError?: (errors: Record<string, string>) => void;
   showTitle?: boolean;
   apiDictLoader?: (dictId: string, values: Record<string, any>) => Promise<{ code: string; label: string; attrs?: any }[]>;
+  suggestLoader?: (field: Field, query: string, values: Record<string, any>) => Promise<SuggestItem[]>;
   fileUpload?: (file: File) => Promise<{ id: string; url: string; filename: string; size: number }>;
 }
 
 type DictItem = { code: string; label: string; attrs?: any };
+type SuggestItem = { value: string; label: string; data: any };
 
 const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
-  { schema, dictionaries, onSubmit, onChange, onError, showTitle = true, apiDictLoader, fileUpload },
+  { schema, dictionaries, onSubmit, onChange, onError, showTitle = true, apiDictLoader, suggestLoader, fileUpload },
   ref,
 ) {
   const [values, setValues] = useState<Record<string, any>>({});
@@ -64,6 +67,9 @@ const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
   const [apiOptions, setApiOptions] = useState<Record<string, DictItem[]>>({});
   const [apiLoading, setApiLoading] = useState<Record<string, boolean>>({});
   const apiKeys = useRef<Record<string, string>>({});
+  const [suggestOpts, setSuggestOpts] = useState<Record<string, SuggestItem[]>>({});
+  const [suggestBusy, setSuggestBusy] = useState<Record<string, boolean>>({});
+  const suggestTimers = useRef<Record<string, any>>({});
 
   const dictById = useMemo(() => {
     const m: Record<string, Dictionary> = {};
@@ -326,6 +332,98 @@ const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
     );
   }
 
+  function digPath(obj: any, path: string): any {
+    return (path || '').split('.').filter(Boolean).reduce((n, k) => (n == null ? n : n[k]), obj);
+  }
+
+  // Templates and fill-paths are resolved against the RAW API element (item.data),
+  // exactly like «Сохранить»/«Показать» (valueField/labelField). So {{data.inn}}
+  // for DaData means item.data.data.inn — same path the constructor's «Тест» shows.
+  function fillTemplate(tpl: string, raw: any): string {
+    return (tpl || '').replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_m, p) => {
+      const val = digPath(raw, p);
+      return val == null ? '' : String(val);
+    })
+      // Tidy up separators around parts that resolved to empty.
+      .replace(/,\s*,/g, ', ')
+      .replace(/·\s*·/g, '·')
+      .replace(/^[\s,·]+|[\s,·]+$/g, '')
+      .trim();
+  }
+
+  function suggestControl(f: Field) {
+    const cfg = f.suggest || {};
+    const min = cfg.minChars ?? 3;
+    const v = values[f.id];
+    const busy = !!suggestBusy[f.id];
+    const opts = (suggestOpts[f.id] || []).map((it) => {
+      const primary = cfg.labelTemplate ? fillTemplate(cfg.labelTemplate, it.data) : it.label;
+      const subtitle = cfg.subtitleTemplate ? fillTemplate(cfg.subtitleTemplate, it.data) : '';
+      return {
+        value: it.value,
+        item: it,
+        label: subtitle
+          ? (
+            <div>
+              <div>{primary}</div>
+              <div style={{ fontSize: 12, color: '#8c8c8c', lineHeight: 1.3 }}>{subtitle}</div>
+            </div>
+          )
+          : primary,
+      };
+    });
+
+    const doSearch = (text: string) => {
+      const q = (text || '').trim();
+      if (!suggestLoader || q.length < min) {
+        setSuggestOpts((p) => ({ ...p, [f.id]: [] }));
+        return;
+      }
+      if (suggestTimers.current[f.id]) clearTimeout(suggestTimers.current[f.id]);
+      suggestTimers.current[f.id] = setTimeout(() => {
+        setSuggestBusy((p) => ({ ...p, [f.id]: true }));
+        suggestLoader(f, q, values)
+          .then((items) => setSuggestOpts((p) => ({ ...p, [f.id]: items })))
+          .catch(() => setSuggestOpts((p) => ({ ...p, [f.id]: [] })))
+          .finally(() => setSuggestBusy((p) => ({ ...p, [f.id]: false })));
+      }, 300);
+    };
+
+    return wrap(
+      f,
+      <AutoComplete
+        style={{ width: '100%' }}
+        value={v}
+        options={opts}
+        optionLabelProp="value"
+        onSearch={doSearch}
+        onChange={(val) => setValue(f, val)}
+        onSelect={(val, option: any) => {
+          // Store the picked value and auto-fill related fields from its data.
+          const item: SuggestItem | undefined = option?.item;
+          const patch: Record<string, any> = { [f.id]: val };
+          if (item && cfg.fill?.length) {
+            for (const fm of cfg.fill) {
+              if (!fm.fieldId) continue;
+              // A {{...}} value is a template (combine several parts); otherwise a single path.
+              patch[fm.fieldId] = /\{\{/.test(fm.from || '')
+                ? fillTemplate(fm.from, item.data)
+                : digPath(item.data, fm.from);
+            }
+          }
+          const nextVals = { ...values, ...patch };
+          setValues(nextVals);
+          Object.keys(patch).forEach((k) => setErrors((e) => ({ ...e, [k]: '' })));
+          onChange?.(f.id, val, nextVals);
+        }}
+        placeholder={f.placeholder || 'Начните вводить…'}
+        filterOption={false}
+        notFoundContent={busy ? <Spin size="small" /> : null}
+        allowClear
+      />,
+    );
+  }
+
   function fileControl(f: Field) {
     const fileList = (values[f.id] || []).map((x: any, i: number) => ({ uid: String(i), name: x.filename, url: x.url, status: 'done' }));
     return wrap(
@@ -365,10 +463,10 @@ const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
       case 'info_text':
         return <Paragraph type="secondary" style={{ marginBottom: 0 }}>{f.label}</Paragraph>;
       case 'textarea':
-        return wrap(f, <Input.TextArea rows={f.rows || 3} placeholder={f.placeholder || ''} value={v} onChange={(e) => setValue(f, e.target.value)} />);
+        return wrap(f, <Input.TextArea rows={f.rows || 3} placeholder={f.placeholder || ''} value={v} readOnly={f.readOnly} onChange={(e) => setValue(f, e.target.value)} />);
       case 'number':
       case 'amount':
-        return wrap(f, <InputNumber style={{ width: '100%' }} value={v} min={f.validation?.min} max={f.validation?.max} step={f.validation?.step} onChange={(x) => setValue(f, x)} addonAfter={f.type === 'amount' ? '₽' : undefined} />);
+        return wrap(f, <InputNumber style={{ width: '100%' }} value={v} readOnly={f.readOnly} min={f.validation?.min} max={f.validation?.max} step={f.validation?.step} onChange={(x) => setValue(f, x)} addonAfter={f.type === 'amount' ? '₽' : undefined} />);
       case 'calculated': {
         const num = Number(computed[f.id] || 0);
         const text = `${f.calcPrefix || ''}${num.toFixed(f.calcDecimals ?? 2)}${f.calcSuffix || ''}`;
@@ -415,6 +513,8 @@ const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
       case 'dict_radio':
       case 'dict_checkbox':
         return dictControl(f);
+      case 'suggest':
+        return suggestControl(f);
       case 'file':
       case 'image':
         return fileControl(f);
@@ -428,6 +528,7 @@ const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
           <Comp
             placeholder={f.placeholder || ''}
             value={v}
+            readOnly={f.readOnly}
             inputMode={preset && preset !== 'phone' ? 'numeric' : undefined}
             onChange={(e: any) => setValue(f, preset || f.mask?.pattern ? maskValue(f.type, f.mask?.pattern, preset, e.target.value) : e.target.value)}
           />,

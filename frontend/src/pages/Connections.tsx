@@ -15,6 +15,18 @@ const AUTH_TYPES = [
   { label: 'API key (query)', value: 'apikey_query' },
 ];
 
+const isDaData = (baseUrl?: string) => /suggestions\.dadata\.ru/i.test(baseUrl || '');
+
+// A meaningful probe per provider. DaData rejects a bare GET on its base URL,
+// so we hit the real suggest endpoint with a tiny query; everyone else just
+// probes the base URL with GET.
+function testRecipe(c: Connection): { endpoint?: string; method?: string; body?: any } {
+  if (isDaData(c.base_url)) {
+    return { endpoint: '/suggest/address', method: 'POST', body: { query: 'москва', count: 1 } };
+  }
+  return {};
+}
+
 export default function Connections() {
   const { message } = App.useApp();
   const [conns, setConns] = useState<Connection[]>([]);
@@ -53,7 +65,16 @@ export default function Connections() {
     // An empty field on an existing connection means "keep the stored secret".
     if (v.auth_type === 'bearer') { if (v.token) auth_config.token = v.token; }
     if (v.auth_type === 'basic') { auth_config.login = v.login; if (v.password) auth_config.password = v.password; }
-    if (v.auth_type === 'apikey_header') { auth_config.headerName = v.headerName; if (v.token) auth_config.token = v.token; }
+    if (v.auth_type === 'apikey_header') {
+      auth_config.headerName = v.headerName;
+      if (v.token) {
+        // DaData expects `Authorization: Token <key>`; the header value is sent
+        // verbatim, so prepend the scheme if the user pasted just the key.
+        auth_config.token = isDaData(v.base_url) && !/^token\s/i.test(v.token.trim())
+          ? `Token ${v.token.trim()}`
+          : v.token;
+      }
+    }
     if (v.auth_type === 'apikey_query') { auth_config.paramName = v.paramName; if (v.token) auth_config.token = v.token; }
     const body: any = {
       name: v.name, base_url: v.base_url, auth_type: v.auth_type, auth_config,
@@ -70,7 +91,8 @@ export default function Connections() {
   async function runTest(id: string, inDrawer = false): Promise<void> {
     setTestingId(id);
     try {
-      const res = await testConnection(id);
+      const conn = conns.find((c) => c.id === id);
+      const res = await testConnection(id, conn ? testRecipe(conn) : {});
       setResults((m) => ({ ...m, [id]: res }));
       if (inDrawer) setDrawerResult(res);
       if (res.ok) message.success(`Работает — ${res.message}${res.latency_ms != null ? ` · ${res.latency_ms} мс` : ''}`);
@@ -174,7 +196,12 @@ export default function Connections() {
           </>}
           {authType === 'apikey_header' && <>
             <AntForm.Item name="headerName" label="Header name" initialValue="Authorization"><Input /></AntForm.Item>
-            <AntForm.Item name="token" label="Token"><Input.Password placeholder={editing ? '•••• (оставьте пустым, чтобы не менять)' : ''} /></AntForm.Item>
+            <AntForm.Item
+              name="token" label="Token"
+              extra="Значение уходит в заголовок как есть. Для DaData используйте API-ключ (не секретный) — префикс «Token » добавится автоматически."
+            >
+              <Input.Password placeholder={editing ? '•••• (оставьте пустым, чтобы не менять)' : ''} />
+            </AntForm.Item>
           </>}
           {authType === 'apikey_query' && <>
             <AntForm.Item name="paramName" label="Param name"><Input /></AntForm.Item>

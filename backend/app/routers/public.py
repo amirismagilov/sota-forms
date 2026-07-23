@@ -9,6 +9,7 @@ from ..db import get_db
 from ..deps import get_account_by_id
 from ..dict_resolver import resolve_api_dictionary
 from ..models import Dictionary, Form, FormVersion, Submission, WebhookDelivery
+from ..suggest import resolve_suggest
 from ..ratelimit import check_rate_limit
 from ..schemas import PublicFormOut, SubmitIn
 
@@ -80,6 +81,48 @@ async def public_form(form_id: str, db: AsyncSession = Depends(get_db)):
         design_tokens=acc.design_tokens,
         dictionaries=dicts,
     )
+
+
+@router.post("/forms/{form_id}/suggest")
+async def form_suggest(form_id: str, body: dict | None = None, db: AsyncSession = Depends(get_db)):
+    """Typeahead for a suggest field (called per keystroke by the widget).
+
+    The field's connection/endpoint/mapping live in the published form snapshot —
+    the widget only sends the typed query and current values, so secrets and the
+    connection never leave the backend.
+    """
+    body = body or {}
+    field_id = body.get("fieldId")
+    query = (body.get("query") or "").strip()
+    values = body.get("values", {})
+
+    f = (await db.execute(select(Form).where(Form.form_id == form_id))).scalar_one_or_none()
+    if not f or f.status == "archived" or not f.published_version:
+        raise HTTPException(404, "form not available")
+    snap = (
+        await db.execute(
+            select(FormVersion).where(FormVersion.form_pk == f.id, FormVersion.version == f.published_version)
+        )
+    ).scalar_one_or_none()
+    if not snap:
+        raise HTTPException(404, "published version missing")
+
+    field = next(
+        (x for x in (snap.fields or []) if x.get("id") == field_id and x.get("type") == "suggest"),
+        None,
+    )
+    cfg = (field or {}).get("suggest") or {}
+    if not field or not cfg.get("connectionId"):
+        raise HTTPException(404, "suggest field not configured")
+    if len(query) < int(cfg.get("minChars") or 1):
+        return {"items": []}
+    try:
+        _, items = await resolve_suggest(db, cfg, query, values)
+        return {"items": items}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, f"suggest source error: {exc}") from exc
 
 
 @router.post("/dictionaries/{dict_id}/options")

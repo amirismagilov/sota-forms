@@ -12,6 +12,7 @@ import {
   UnorderedListOutlined,
 } from '@ant-design/icons';
 import {
+  Alert,
   App,
   Button,
   Card,
@@ -32,10 +33,11 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import {
-  getDictOptions, getForm, getTheme, listDictionaries, listVersions, publishForm, rollbackForm, updateForm, uploadFile,
+  getDictOptions, getForm, getTheme, listConnections, listDictionaries, listVersions, probeSuggest,
+  publishForm, rollbackForm, updateForm, uploadFile,
 } from '../api';
 import { extractRefs } from '../renderer/engine';
-import type { Dictionary, Field, FormSchema, FormVersionInfo } from '../types';
+import type { Connection, Dictionary, Field, FormSchema, FormVersionInfo } from '../types';
 import ThemedForm from '../widget/ThemedForm';
 import { FIELD_TYPE_GROUPS, MASK_PRESETS, OPERATORS } from './fieldTypes';
 import LayoutEditor, { ensureLayout } from './LayoutEditor';
@@ -55,6 +57,7 @@ export default function FormEditor() {
   const { message } = App.useApp();
   const [form, setForm] = useState<FormSchema | null>(null);
   const [dicts, setDicts] = useState<Dictionary[]>([]);
+  const [conns, setConns] = useState<Connection[]>([]);
   const [tokens, setTokens] = useState<Record<string, any>>({});
   const [editIndex, setEditIndex] = useState<number | null>(null);
   const [fieldForm] = AntForm.useForm();
@@ -62,11 +65,13 @@ export default function FormEditor() {
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [versions, setVersions] = useState<FormVersionInfo[]>([]);
   const [leftView, setLeftView] = useState<'fields' | 'layout'>('fields');
+  const [suggestTest, setSuggestTest] = useState<any>(null);
 
   useEffect(() => {
     if (!pk) return;
     getForm(pk).then(setForm);
     listDictionaries().then(setDicts).catch(() => {});
+    listConnections().then(setConns).catch(() => {});
     getTheme().then((t) => setTokens(t.design_tokens?.token || {})).catch(() => {});
   }, [pk]);
 
@@ -96,6 +101,20 @@ export default function FormEditor() {
       setForm({ ...form!, fields: next });
       setEditIndex(null);
     });
+  }
+
+  async function runSuggestTest() {
+    const vals = fieldForm.getFieldsValue();
+    const cfg = vals.suggest || {};
+    if (!cfg.connectionId) { message.info('Выберите подключение'); return; }
+    setSuggestTest({ loading: true });
+    try {
+      const res = await probeSuggest({ suggest: cfg, query: cfg.__testQuery || 'сбер', values: {} });
+      setSuggestTest(res);
+      if (!res.ok) message.error(res.error || 'Ошибка запроса');
+    } catch (e: any) {
+      setSuggestTest({ ok: false, error: e?.response?.data?.detail || String(e) });
+    }
   }
 
   function removeField(i: number) {
@@ -257,6 +276,8 @@ export default function FormEditor() {
             dictionaries={dicts}
             tokens={{ token: tokens }}
             apiDictLoader={getDictOptions}
+            suggestLoader={(field, query, values) =>
+              probeSuggest({ suggest: field.suggest, query, values }).then((r) => r.items || [])}
             fileUpload={uploadFile}
             showTitle={false}
           />
@@ -273,7 +294,12 @@ export default function FormEditor() {
       >
         <AntForm form={fieldForm} layout="vertical">
           <AntForm.Item name="type" label="Тип поля" rules={[{ required: true }]}>
-            <Select options={FIELD_TYPE_GROUPS} />
+            <Select
+              options={FIELD_TYPE_GROUPS}
+              showSearch
+              optionFilterProp="label"
+              placeholder="Начните вводить: текст, инн, дата, подсказка…"
+            />
           </AntForm.Item>
           <AntForm.Item name="label" label={LAYOUT_TYPES.includes(editType) ? 'Текст' : 'Заголовок'} rules={[{ required: true }]}>
             <Input />
@@ -296,6 +322,10 @@ export default function FormEditor() {
                   </AntForm.Item>
                 </Col>
               </Row>
+              <AntForm.Item name="readOnly" label="Только для чтения" valuePropName="checked"
+                tooltip="Поле не редактируется вручную — например, заполняется автоматически из подсказки (ИНН, адрес).">
+                <Switch />
+              </AntForm.Item>
               <AntForm.Item name="placeholder" label="Placeholder"><Input /></AntForm.Item>
               <AntForm.Item name="hint" label="Подсказка под полем"><Input /></AntForm.Item>
               <AntForm.Item name="tooltip" label="Tooltip (иконка ?)"><Input /></AntForm.Item>
@@ -312,6 +342,120 @@ export default function FormEditor() {
               </AntForm.Item>
               <AntForm.Item name="showExtra" label="Показывать атрибуты значения" valuePropName="checked"><Switch /></AntForm.Item>
             </>
+          )}
+
+          {editType === 'suggest' && (
+            <Card size="small" title="Подсказка (API)" style={{ marginBottom: 12 }}
+              extra={<Button size="small" type="primary" ghost onClick={runSuggestTest}>Тест</Button>}>
+              <Alert
+                type="info" showIcon style={{ marginBottom: 12 }}
+                message="Поиск по мере ввода через API"
+                description={<span style={{ fontSize: 12 }}>Пользователь печатает — запрос уходит в API с введённым текстом, показываются совпадения. При выборе можно автозаполнить другие поля.</span>}
+              />
+              <AntForm.Item label="Пресеты">
+                <Space wrap>
+                  <Button size="small" onClick={() => {
+                    const dd = conns.find((c) => /dadata/i.test(c.base_url));
+                    fieldForm.setFieldsValue({ suggest: {
+                      connectionId: dd?.id, method: 'POST', endpoint: '/suggest/address', queryParam: 'query',
+                      params: '{"count": 10}', minChars: 3, path: 'suggestions', labelField: 'value', valueField: 'value',
+                      labelTemplate: '{{value}}', subtitleTemplate: 'индекс {{data.postal_code}}', fill: [],
+                    } });
+                  }}>DaData адрес</Button>
+                  <Button size="small" onClick={() => {
+                    const dd = conns.find((c) => /dadata/i.test(c.base_url));
+                    fieldForm.setFieldsValue({ suggest: {
+                      connectionId: dd?.id, method: 'POST', endpoint: '/suggest/party', queryParam: 'query',
+                      params: '{"count": 10}', minChars: 3, path: 'suggestions', labelField: 'value', valueField: 'value',
+                      labelTemplate: '{{value}}', subtitleTemplate: 'ИНН {{data.inn}} · {{data.address.value}}',
+                      fill: [{ fieldId: '', from: 'data.inn' }],
+                    } });
+                  }}>DaData компания / ИНН</Button>
+                </Space>
+              </AntForm.Item>
+              <AntForm.Item name={['suggest', 'connectionId']} label="Подключение" rules={[{ required: true }]}
+                tooltip="Настраивается в разделе «Подключения». Секреты остаются на сервере.">
+                <Select options={conns.map((c) => ({ label: `${c.name} (${c.base_url})`, value: c.id }))} placeholder="Выберите подключение" />
+              </AntForm.Item>
+              <Row gutter={8}>
+                <Col span={8}><AntForm.Item name={['suggest', 'method']} label="Метод" initialValue="POST">
+                  <Select options={[{ label: 'POST', value: 'POST' }, { label: 'GET', value: 'GET' }]} />
+                </AntForm.Item></Col>
+                <Col span={16}><AntForm.Item name={['suggest', 'endpoint']} label="Адрес (endpoint)" tooltip="DaData: /suggest/address или /suggest/party">
+                  <Input placeholder="/suggest/address" />
+                </AntForm.Item></Col>
+              </Row>
+              <Row gutter={8}>
+                <Col span={12}><AntForm.Item name={['suggest', 'queryParam']} label="Параметр запроса" initialValue="query"
+                  tooltip="Имя параметра, в который кладётся введённый текст. DaData: query">
+                  <Input placeholder="query" />
+                </AntForm.Item></Col>
+                <Col span={12}><AntForm.Item name={['suggest', 'minChars']} label="Мин. символов" initialValue={3}>
+                  <InputNumber min={1} max={10} style={{ width: '100%' }} />
+                </AntForm.Item></Col>
+              </Row>
+              <AntForm.Item name={['suggest', 'params']} label="Доп. параметры (JSON)" tooltip='Статические параметры, {{id_поля}} поддерживается. Напр. {"count": 10}'>
+                <Input placeholder='{"count": 10}' style={{ fontFamily: 'monospace', fontSize: 12 }} />
+              </AntForm.Item>
+              <Row gutter={8}>
+                <Col span={8}><AntForm.Item name={['suggest', 'path']} label="Где список" tooltip="Путь до массива в ответе. DaData: suggestions">
+                  <Input placeholder="suggestions" />
+                </AntForm.Item></Col>
+                <Col span={8}><AntForm.Item name={['suggest', 'labelField']} label="Показать" tooltip="Поле для отображения. DaData: value">
+                  <Input placeholder="value" />
+                </AntForm.Item></Col>
+                <Col span={8}><AntForm.Item name={['suggest', 'valueField']} label="Сохранить" tooltip="Что записать в поле. Можно вложенно: data.fias_id, data.inn">
+                  <Input placeholder="value" />
+                </AntForm.Item></Col>
+              </Row>
+              <AntForm.Item name={['suggest', 'labelTemplate']} label="Что показать в списке (основная строка)"
+                tooltip="Шаблон с {{путь}}: {{value}}, {{data.inn}} и т.д. Пусто = поле «Показать».">
+                <Input placeholder="{{value}}" style={{ fontFamily: 'monospace', fontSize: 12 }} />
+              </AntForm.Item>
+              <AntForm.Item name={['suggest', 'subtitleTemplate']} label="Вторая строка (серым, необязательно)"
+                tooltip="Доп. строка под названием. Доступные поля смотри в «Тест» → сырой ответ."
+                extra="Напр.: ИНН {{data.inn}} · {{data.address.value}}">
+                <Input placeholder="ИНН {{data.inn}} · {{data.address.value}}" style={{ fontFamily: 'monospace', fontSize: 12 }} />
+              </AntForm.Item>
+              <Typography.Text strong style={{ fontSize: 12 }}>Автозаполнение полей при выборе</Typography.Text>
+              <AntForm.List name={['suggest', 'fill']}>
+                {(fl, { add, remove }) => (
+                  <div style={{ margin: '4px 0 8px' }}>
+                    {fl.map((ff) => (
+                      <Space key={ff.key} align="baseline" style={{ display: 'flex', marginBottom: 4 }}>
+                        <AntForm.Item {...ff} name={[ff.name, 'fieldId']} noStyle>
+                          <Select style={{ width: 160 }} placeholder="какое поле" options={otherFields.map((of) => ({ label: `${of.label} (${of.id})`, value: of.id }))} />
+                        </AntForm.Item>
+                        <span style={{ color: '#888' }}>←</span>
+                        <AntForm.Item {...ff} name={[ff.name, 'from']} noStyle>
+                          <Input placeholder="data.inn или {{..}}, {{..}}" style={{ width: 220, fontFamily: 'monospace', fontSize: 12 }} />
+                        </AntForm.Item>
+                        <DeleteOutlined onClick={() => remove(ff.name)} />
+                      </Space>
+                    ))}
+                    <Button size="small" icon={<PlusOutlined />} onClick={() => add({ fieldId: '', from: '' })}>Поле</Button>
+                  </div>
+                )}
+              </AntForm.List>
+              {suggestTest && (
+                <Card size="small" style={{ background: '#fafafa', marginTop: 8 }}>
+                  {suggestTest.loading ? 'Запрос…' : suggestTest.ok ? (
+                    <>
+                      <Tag color={suggestTest.items?.length ? 'green' : 'orange'}>
+                        {suggestTest.items?.length ? `OK · ${suggestTest.items.length} совпадений (запрос «сбер»)` : 'Ответ пуст'}
+                      </Tag>
+                      {suggestTest.items?.slice(0, 3).map((it: any, i: number) => (
+                        <div key={i} style={{ fontSize: 12 }}><b>{it.label}</b> <Typography.Text type="secondary">→ {it.value}</Typography.Text></div>
+                      ))}
+                      <details style={{ marginTop: 6 }}>
+                        <summary style={{ cursor: 'pointer', fontSize: 12, color: '#888' }}>Сырой ответ</summary>
+                        <pre style={{ margin: '6px 0 0', fontSize: 11, maxHeight: 180, overflow: 'auto' }}>{JSON.stringify(suggestTest.raw, null, 2)}</pre>
+                      </details>
+                    </>
+                  ) : <Tag color="red">Ошибка: {suggestTest.error}</Tag>}
+                </Card>
+              )}
+            </Card>
           )}
 
           {STATIC_OPT_TYPES.includes(editType) && (

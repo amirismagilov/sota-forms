@@ -102,6 +102,27 @@ async def seed_if_empty() -> None:
             auth_config={},
             whitelist=[],
         )
+        # DaData suggestions — connection shell WITHOUT the secret. Structure is
+        # restored on any reset; the user pastes their API key once.
+        dadata_conn = Connection(
+            id="conn_dadata",
+            account_id=DEMO_ACCOUNT_ID,
+            name="DaData Suggestions",
+            base_url="https://suggestions.dadata.ru/suggestions/api/4_1/rs",
+            auth_type="apikey_header",
+            auth_config={"headerName": "Authorization"},
+            whitelist=["^/suggest/.*"],
+        )
+        # Leasing-broker partner API (local mock).
+        broker_conn = Connection(
+            id="conn_broker",
+            account_id=DEMO_ACCOUNT_ID,
+            name="Брокер лизинга (mock)",
+            base_url=MOCK_EXT_BASE.rsplit("/", 1)[0] + "/broker",
+            auth_type="none",
+            auth_config={},
+            whitelist=["^/api/.*"],
+        )
         products = Dictionary(
             id="dict_products",
             account_id=DEMO_ACCOUNT_ID,
@@ -127,7 +148,7 @@ async def seed_if_empty() -> None:
                 "refresh": "hourly",
             },
         )
-        db.add_all([regions, delivery, tariffs, catalog_conn, products])
+        db.add_all([regions, delivery, tariffs, catalog_conn, dadata_conn, broker_conn, products])
 
         # --- Demo form ----------------------------------------------------
         fields = [

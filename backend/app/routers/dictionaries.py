@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import require_account
 from ..db import get_db
-from ..dict_resolver import resolve_api_dictionary
+from ..dict_resolver import probe_api_dictionary, resolve_api_dictionary
 from ..models import Dictionary
 from ..schemas import DictionaryIn, DictionaryOut
 
@@ -72,7 +72,39 @@ async def test_dictionary(dict_id: str, body: dict | None = None, db: AsyncSessi
         raise HTTPException(400, "not an API dictionary")
     values = (body or {}).get("values", {})
     try:
-        items = await resolve_api_dictionary(db, d, values)
+        raw, items = await probe_api_dictionary(db, d, values)
     except Exception as exc:  # honest failure surfacing
         return {"ok": False, "error": str(exc)}
-    return {"ok": True, "items": items[:50]}
+    return {"ok": True, "items": items[:50], "raw": _trim_raw(raw)}
+
+
+@router.post("/probe")
+async def probe_dictionary(body: dict | None = None, db: AsyncSession = Depends(get_db), aid: str = Depends(require_account)):
+    """Test-run an API config that isn't saved yet, so the constructor can show
+    the response structure before the user commits the dictionary.
+
+    Builds a throwaway (unpersisted) Dictionary from the posted config and runs
+    the same probe as the saved-dictionary test.
+    """
+    body = body or {}
+    cfg = body.get("api_config") or {}
+    if not cfg.get("connectionId"):
+        return {"ok": False, "error": "Выберите подключение"}
+    transient = Dictionary(
+        account_id=aid, code="__probe__", name="probe", type="api",
+        api_config=cfg, dependencies=body.get("dependencies") or [], attrs=[], items=[],
+    )
+    try:
+        raw, items = await probe_api_dictionary(db, transient, body.get("values", {}))
+    except Exception as exc:  # honest failure surfacing
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, "items": items[:50], "raw": _trim_raw(raw)}
+
+
+def _trim_raw(raw: object, max_items: int = 5) -> object:
+    """Shrink the raw response for the UI preview: keep structure, cap list sizes."""
+    if isinstance(raw, list):
+        return [_trim_raw(x, max_items) for x in raw[:max_items]]
+    if isinstance(raw, dict):
+        return {k: _trim_raw(v, max_items) for k, v in raw.items()}
+    return raw

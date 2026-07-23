@@ -94,6 +94,10 @@ class NoCodeForm extends HTMLElement {
       const res = (await axios.post(`${api}/public/dictionaries/${dictId}/options`, { values })).data;
       return res.items || [];
     };
+    const suggestLoader = async (field: any, query: string, values: Record<string, any>) => {
+      const res = (await axios.post(`${api}/public/forms/${formId}/suggest`, { fieldId: field.id, query, values })).data;
+      return res.items || [];
+    };
     const fileUpload = async (file: File) => {
       const fd = new FormData();
       fd.append('file', file);
@@ -114,6 +118,7 @@ class NoCodeForm extends HTMLElement {
         onChange={onChange}
         onError={onError}
         apiDictLoader={apiDictLoader}
+        suggestLoader={suggestLoader}
         fileUpload={fileUpload}
       />,
     );
