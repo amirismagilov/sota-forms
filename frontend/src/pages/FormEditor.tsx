@@ -1,7 +1,5 @@
 import {
   AppstoreOutlined,
-  ArrowDownOutlined,
-  ArrowUpOutlined,
   CloudUploadOutlined,
   CopyOutlined,
   DeleteOutlined,
@@ -128,14 +126,6 @@ export default function FormEditor() {
     setForm({ ...form!, fields: next });
   }
 
-  function move(i: number, dir: -1 | 1) {
-    const j = i + dir;
-    if (j < 0 || j >= form!.fields.length) return;
-    const next = [...form!.fields];
-    [next[i], next[j]] = [next[j], next[i]];
-    setForm({ ...form!, fields: next });
-  }
-
   async function save() {
     try {
       const saved = await updateForm(pk!, {
@@ -238,8 +228,6 @@ export default function FormEditor() {
                     highlight={highlight === f.id}
                     onEdit={() => openEditor(i)}
                     onDelete={() => removeField(i)}
-                    onUp={() => move(i, -1)}
-                    onDown={() => move(i, 1)}
                     onBadgeClick={(target: string) => { setHighlight(target); setTimeout(() => setHighlight(null), 1500); }}
                     onCopyId={() => { navigator.clipboard?.writeText(f.id); message.success('ID скопирован: ' + f.id); }}
                   />
@@ -578,7 +566,7 @@ export default function FormEditor() {
 }
 
 // ---- Field row with dependency badges ----
-function FieldRow({ field, highlight, onEdit, onDelete, onUp, onDown, onBadgeClick, onCopyId }: any) {
+function FieldRow({ field, highlight, onEdit, onDelete, onBadgeClick, onCopyId }: any) {
   const f: Field = field;
   const isLayout = LAYOUT_TYPES.includes(f.type);
   const badges: React.ReactNode[] = [];
@@ -611,8 +599,6 @@ function FieldRow({ field, highlight, onEdit, onDelete, onUp, onDown, onBadgeCli
         </Col>
         <Col>
           <Space size={2}>
-            <Button size="small" type="text" icon={<ArrowUpOutlined />} onClick={onUp} />
-            <Button size="small" type="text" icon={<ArrowDownOutlined />} onClick={onDown} />
             <Button size="small" type="text" icon={<EditOutlined />} onClick={onEdit} />
             <Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={onDelete} />
           </Space>

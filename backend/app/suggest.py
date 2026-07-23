@@ -64,7 +64,14 @@ async def resolve_suggest(
 
     node = dig(raw, cfg.get("path", ""))
     if not isinstance(node, list):
-        node = raw if isinstance(raw, list) else []
+        if isinstance(raw, list):
+            node = raw
+        elif isinstance(raw, dict):
+            # No/blank path: auto-detect the first key holding a list of objects
+            # (e.g. DaData "suggestions"), so a misconfigured field still works.
+            node = next((v for v in raw.values() if isinstance(v, list) and v and isinstance(v[0], dict)), [])
+        else:
+            node = []
 
     label_f = cfg.get("labelField") or "value"
     value_f = cfg.get("valueField") or label_f
