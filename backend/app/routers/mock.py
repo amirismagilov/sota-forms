@@ -39,6 +39,32 @@ _BRANCHES = {
 }
 
 
+# Stand-in "users directory": фильтрация по роли и другим параметрам.
+_USERS = [
+    {"id": "u1", "name": "Иванов Иван", "email": "ivanov@company.ru", "role": "manager", "department": "Продажи", "active": True},
+    {"id": "u2", "name": "Петрова Мария", "email": "petrova@company.ru", "role": "manager", "department": "Продажи", "active": True},
+    {"id": "u3", "name": "Сидоров Пётр", "email": "sidorov@company.ru", "role": "senior_manager", "department": "Продажи", "active": True},
+    {"id": "u4", "name": "Кузнецова Анна", "email": "kuznecova@company.ru", "role": "manager", "department": "Лизинг", "active": True},
+    {"id": "u5", "name": "Смирнов Алексей", "email": "smirnov@company.ru", "role": "admin", "department": "Администрация", "active": True},
+    {"id": "u6", "name": "Волкова Ольга", "email": "volkova@company.ru", "role": "manager", "department": "Лизинг", "active": False},
+]
+
+
+@router.get("/ext/users")
+async def ext_users(role: str = "", department: str = "", q: str = "", active: bool | None = None):
+    """Users directory with filters: ?role=manager&department=Продажи&q=ив&active=true."""
+    rows = _USERS
+    if role:
+        rows = [u for u in rows if u["role"] == role]
+    if department:
+        rows = [u for u in rows if u["department"] == department]
+    if active is not None:
+        rows = [u for u in rows if u["active"] is active]
+    if q:
+        rows = [u for u in rows if q.lower() in u["name"].lower()]
+    return {"data": rows}
+
+
 @router.get("/ext/products")
 async def ext_products():
     """Single-URL source with attributes (price/stock) for mapping."""
