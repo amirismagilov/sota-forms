@@ -5,8 +5,9 @@ services:
       POSTGRES_USER: forms
       POSTGRES_PASSWORD: forms
       POSTGRES_DB: forms
-    ports:
-      - "5432:5432"
+    # No host port mapping: only the backend/worker reach it over the internal
+    # network (db:5432). Avoids clashing with a local Postgres on the host.
+    # To inspect from the host, uncomment:  ports: ["5433:5432"]
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -17,8 +18,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    # Internal only (redis:6379). Uncomment to expose:  ports: ["6380:6379"]
 
   backend:
     build: ./backend
