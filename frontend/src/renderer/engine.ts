@@ -160,7 +160,9 @@ export function dictItemsFor(
   values: Record<string, any>,
 ): Dictionary['items'] {
   if (!dict) return [];
-  const dep = dict.dependencies?.[0];
+  // Only a dependency with a real fieldId cascades. An empty/incomplete row ({})
+  // must NOT hide all options.
+  const dep = dict.dependencies?.find((d) => d && d.fieldId);
   if (dep) {
     const parentVal = values[dep.fieldId];
     if (parentVal === undefined || parentVal === '' || parentVal === null) return [];

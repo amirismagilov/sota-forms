@@ -68,7 +68,8 @@ export default function Dictionaries() {
       code: vals.code,
       name: vals.name,
       type: vals.type,
-      dependencies: vals.dependencies || [],
+      // Drop empty/incomplete dependency rows so they don't blank out the list.
+      dependencies: (vals.dependencies || []).filter((d: any) => d && d.fieldId),
       attrs: vals.attrs || [],
       items: vals.type === 'manual'
         ? (vals.items || []).map((it: any) => ({ code: it.code, label: it.label, parentValue: it.parentValue || '', attrs: safeJson(it.attrs) }))

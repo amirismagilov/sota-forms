@@ -85,6 +85,9 @@ export default function FormEditor() {
   const otherFields = form.fields.filter((f) => f.id !== currentFieldId);
 
   function openEditor(index: number | null) {
+    // Clear the shared editor form first, otherwise values from the previously
+    // edited field (placeholder, dictDisplay, …) leak into this one and get saved.
+    fieldForm.resetFields();
     if (index === null) {
       const f: Field = { id: newFieldId(), type: 'text', label: 'Новое поле', gridSpan: 1 };
       setForm({ ...form!, fields: [...form!.fields, f] });
@@ -344,9 +347,6 @@ export default function FormEditor() {
             <>
               <AntForm.Item name="dictionaryId" label="Справочник" rules={[{ required: true }]}>
                 <Select options={dicts.map((d) => ({ label: `${d.name} (${d.code})`, value: d.id }))} />
-              </AntForm.Item>
-              <AntForm.Item name="dictDisplay" label="Отображение">
-                <Select options={[{ label: 'Список', value: 'select' }, { label: 'Радио', value: 'radio' }, { label: 'Чекбоксы', value: 'checkbox' }]} />
               </AntForm.Item>
               <AntForm.Item name="showExtra" label="Показывать атрибуты значения" valuePropName="checked"><Switch /></AntForm.Item>
             </>
@@ -683,6 +683,11 @@ function formToField(vals: any, prev: Field): Field {
   // Auto-apply mask regex for special types.
   if (MASK_PRESETS[vals.type]) {
     out.mask = { preset: vals.type, regex: MASK_PRESETS[vals.type].regex };
+  }
+  // Display is derived from the dictionary field type (single source of truth),
+  // so «Тип поля» and how it renders can never disagree.
+  if (DICT_TYPES.includes(out.type)) {
+    out.dictDisplay = out.type === 'dict_radio' ? 'radio' : out.type === 'dict_checkbox' ? 'checkbox' : 'select';
   }
   if (!vals.visibleIf?.fieldId) delete out.visibleIf;
   if (!vals.requiredIf?.fieldId) delete out.requiredIf;
