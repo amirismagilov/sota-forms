@@ -133,6 +133,27 @@ const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
     }
   }, [values, schema.fields, dictById, apiDictLoader]);
 
+  // «Совпадает с…»: while the checkbox is ON, keep its target field synced to
+  // the source field's value.
+  useEffect(() => {
+    const patch: Record<string, any> = {};
+    for (const f of schema.fields) {
+      if (f.type === 'same_as' && values[f.id] && f.sameAs?.target && f.sameAs?.source) {
+        if (values[f.sameAs.target] !== values[f.sameAs.source]) patch[f.sameAs.target] = values[f.sameAs.source];
+      }
+    }
+    if (Object.keys(patch).length) setValues((v) => ({ ...v, ...patch }));
+  }, [values, schema.fields]);
+
+  // Target fields of a checked «Совпадает с…» are hidden (value comes from source).
+  const hiddenBySameAs = useMemo(() => {
+    const s = new Set<string>();
+    for (const f of schema.fields) {
+      if (f.type === 'same_as' && values[f.id] && f.sameAs?.target) s.add(f.sameAs.target);
+    }
+    return s;
+  }, [values, schema.fields]);
+
   const setValue = (field: Field, v: any) => {
     const nextVals = { ...values, [field.id]: v };
     for (const f of schema.fields) {
@@ -146,7 +167,7 @@ const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
     onChange?.(field.id, v, nextVals);
   };
 
-  const isVisible = (f: Field) => evalCondition(f.visibleIf, computed);
+  const isVisible = (f: Field) => !hiddenBySameAs.has(f.id) && evalCondition(f.visibleIf, computed);
   const isRequired = (f: Field) => !!f.required || (!!f.requiredIf && evalCondition(f.requiredIf, computed));
 
   function validateField(f: Field): string {
@@ -486,6 +507,12 @@ const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
           <div>
             <Checkbox checked={!!v} onChange={(e) => setValue(f, e.target.checked)}>{f.label}{isRequired(f) && <span style={{ color: '#ff4d4f' }}> *</span>}</Checkbox>
             {errors[f.id] && <div style={{ color: '#ff4d4f', fontSize: 12 }}>{errors[f.id]}</div>}
+          </div>
+        );
+      case 'same_as':
+        return (
+          <div>
+            <Checkbox checked={!!v} onChange={(e) => setValue(f, e.target.checked)}>{f.label}</Checkbox>
           </div>
         );
       case 'toggle':

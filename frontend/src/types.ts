@@ -67,6 +67,9 @@ export interface Field {
   headingLevel?: 1 | 2 | 3;
   fileValidation?: FileValidation;
   suggest?: SuggestConfig;
+  // «Совпадает с…» checkbox: when ON, `target` field is hidden and auto-filled
+  // from `source` field.
+  sameAs?: { target?: string; source?: string };
   // Visual grid placement (set by the layout editor). x/w in columns, y/h in rows.
   layout?: { x: number; y: number; w: number; h: number };
 }

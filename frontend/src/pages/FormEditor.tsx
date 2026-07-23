@@ -58,6 +58,7 @@ export default function FormEditor() {
   const [conns, setConns] = useState<Connection[]>([]);
   const [tokens, setTokens] = useState<Record<string, any>>({});
   const [editIndex, setEditIndex] = useState<number | null>(null);
+  const [isNewField, setIsNewField] = useState(false);
   const [fieldForm] = AntForm.useForm();
   const [highlight, setHighlight] = useState<string | null>(null);
   const [versionsOpen, setVersionsOpen] = useState(false);
@@ -90,11 +91,23 @@ export default function FormEditor() {
       const f: Field = { id: newFieldId(), type: 'text', label: 'Новое поле', gridSpan: 1 };
       setForm({ ...form!, fields: [...form!.fields, f] });
       setEditIndex(form!.fields.length);
+      setIsNewField(true);
       fieldForm.setFieldsValue(fieldToForm(f));
     } else {
       setEditIndex(index);
+      setIsNewField(false);
       fieldForm.setFieldsValue(fieldToForm(form!.fields[index]));
     }
+  }
+
+  // Closing without «Применить» must discard a just-added field, otherwise an
+  // empty «Новое поле» is left behind and resurfaces after save/reload.
+  function closeEditor() {
+    if (isNewField && editIndex !== null) {
+      setForm({ ...form!, fields: form!.fields.filter((_, i) => i !== editIndex) });
+    }
+    setIsNewField(false);
+    setEditIndex(null);
   }
 
   function applyField() {
@@ -103,6 +116,7 @@ export default function FormEditor() {
       const next = [...form!.fields];
       next[editIndex!] = merged;
       setForm({ ...form!, fields: next });
+      setIsNewField(false);
       setEditIndex(null);
     });
   }
@@ -195,7 +209,7 @@ export default function FormEditor() {
                 size="small"
                 style={{ marginLeft: 8 }}
                 value={form.grid_columns}
-                options={[1, 2, 3]}
+                options={[1, 2, 3, 4, 5, 6]}
                 onChange={(v) => setForm({ ...form, grid_columns: Number(v) })}
               />
             </span>
@@ -285,7 +299,7 @@ export default function FormEditor() {
         title={editIndex !== null ? 'Настройка поля' : ''}
         open={editIndex !== null}
         width={460}
-        onClose={() => setEditIndex(null)}
+        onClose={closeEditor}
         extra={<Button type="primary" onClick={applyField}>Применить</Button>}
         destroyOnClose
       >
@@ -342,6 +356,28 @@ export default function FormEditor() {
               <AntForm.Item name="showExtra" label="Показывать атрибуты значения" valuePropName="checked"><Switch /></AntForm.Item>
             </>
           )}
+
+          {editType === 'same_as' && (() => {
+            const opts = otherFields
+              .filter((of) => !['section_header', 'divider', 'info_text', 'same_as'].includes(of.type))
+              .map((of) => ({ label: `${of.label} (${of.id})`, value: of.id }));
+            return (
+              <Card size="small" title="Совпадает с…" style={{ marginBottom: 12 }}>
+                <Alert type="info" showIcon style={{ marginBottom: 12 }}
+                  message="Чекбокс автозаполнения"
+                  description={<span style={{ fontSize: 12 }}>Когда включён — «поле-приёмник» <b>скрывается</b> и <b>заполняется</b> значением из «поля-источника». Напр.: «Почтовый = юридическому».</span>}
+                />
+                <AntForm.Item name={['sameAs', 'target']} label="Поле-приёмник (скроется и заполнится)" rules={[{ required: true }]}
+                  tooltip="Это поле пропадёт с формы и получит значение из источника.">
+                  <Select showSearch optionFilterProp="label" placeholder="напр. Почтовый адрес" options={opts} />
+                </AntForm.Item>
+                <AntForm.Item name={['sameAs', 'source']} label="Поле-источник (откуда взять значение)" rules={[{ required: true }]}
+                  tooltip="Из этого поля берётся значение для приёмника.">
+                  <Select showSearch optionFilterProp="label" placeholder="напр. Юридический адрес" options={opts} />
+                </AntForm.Item>
+              </Card>
+            );
+          })()}
 
           {editType === 'suggest' && (
             <Card size="small" title="Подсказка (API)" style={{ marginBottom: 12 }}
