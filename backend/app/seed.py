@@ -20,7 +20,11 @@ MOCK_EXT_BASE = get_settings().mock_ext_base
 async def seed_if_empty() -> None:
     async with SessionLocal() as db:
         acc = await db.get(Account, DEMO_ACCOUNT_ID)
-        if acc is None:
+        # Content is seeded EXACTLY ONCE — on first ever run (when the demo account
+        # is created). After that we never re-seed, so deleting the demo form/dicts
+        # (or editing connections) STICKS and is never silently recreated on restart.
+        first_run = acc is None
+        if first_run:
             acc = Account(
                 id=DEMO_ACCOUNT_ID,
                 name="Demo Account",
@@ -30,7 +34,7 @@ async def seed_if_empty() -> None:
             db.add(acc)
             await db.flush()
 
-        # Demo login owning the demo account.
+        # Demo login owning the demo account (ensured even on later runs).
         demo_user = (await db.execute(select(User).where(User.email == DEMO_EMAIL))).scalar_one_or_none()
         if demo_user is None:
             db.add(User(
@@ -39,12 +43,10 @@ async def seed_if_empty() -> None:
                 account_id=DEMO_ACCOUNT_ID,
                 role="owner",
             ))
+            await db.commit()
 
-        existing_forms = (
-            await db.execute(select(Form).where(Form.account_id == DEMO_ACCOUNT_ID))
-        ).scalars().first()
-        if existing_forms:
-            return  # already seeded
+        if not first_run:
+            return  # already seeded once — respect the user's data, never recreate
 
         # --- Dictionaries -------------------------------------------------
         regions = Dictionary(
