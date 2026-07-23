@@ -1,0 +1,147 @@
+# SOTA Forms — universal no-code form builder
+
+Полноценный сервис для создания форм со своей базой данных. Формы настраиваются
+в админке без кода, встраиваются в любой проект **микрофронтом по `form-id`**
+(Web Component, Shadow DOM), данные заполнения сохраняются в БД и **отдаются по ID
+заполнения как JSON**.
+
+Стек: **React + Ant Design (TypeScript)** · **Python (FastAPI)** · **PostgreSQL** ·
+**Redis** · всё в **Docker**.
+
+---
+
+## Быстрый старт
+
+```bash
+docker compose up --build
+```
+
+| Сервис | URL |
+|---|---|
+| Конструктор (админка) | http://localhost:5173 |
+| Демо-вход | `demo@sota.forms` / `demo12345` |
+| Пример встраивания (внешний сайт) | http://localhost:5173/embed-demo.html |
+| Backend API + Swagger | http://localhost:8000/docs |
+
+При первом запуске БД засевается демо-аккаунтом, пользователем, справочниками
+(ручные + один **API-справочник** через встроенный mock внешнего API) и готовой
+формой `order_form`.
+
+---
+
+## Возможности
+
+### Конструктор
+- Дерево полей с **бейджами зависимостей** (видимость/обязательность/формула),
+  копированием ID, drag-порядком (вверх/вниз), живым предпросмотром.
+- **40+ типов полей**: текст/textarea/number/email/phone/password/url/date/
+  datetime/time/color; справочники (select/radio/checkbox); статические списки;
+  спец-типы с масками (ИНН/СНИЛС/паспорт/БИК/КПП/ОГРН/карта/сумма); файл/
+  изображение/подпись (canvas); rating/slider; вычисляемые; секции/разделители.
+- **Маски ввода** (пресеты + кастомный паттерн `9`/`A`/`*`) и regex-валидация.
+- **Вычисляемые поля** — безопасный evaluator (whitelist AST, без `eval`),
+  ссылки `{{field}}` и атрибуты значений `{{field.attr}}`, пересчёт в реальном времени.
+- **Зависимости** `visibleIf` / `requiredIf` (eq/neq/contains/empty/gt/lt…).
+- **Экспорт/импорт** схемы формы (JSON).
+- **Тема** — один JSON токенов Ant Design на аккаунт, live-применение ко всем формам.
+
+### Справочники
+- **Ручные** — код + label + parentValue (каскады) + произвольные атрибуты.
+- **API** — подключение, endpoint, params с `{{field}}`, JSON-маппинг, атрибуты,
+  режимы `single` / `smart URL`, кэш (`hourly`/`daily`), кнопка «Тест».
+- **Каскады** — дочерний справочник фильтруется/перезапрашивается по родителю.
+
+### Интеграции (backend proxy)
+- Подключения со всеми типами auth (none/bearer/basic/apikey header/query);
+  **секреты шифруются (AES/Fernet)** и никогда не отдаются на фронт.
+- Whitelist путей (regex), rate-limit, **кэш ответов в Redis**.
+- Пресеты **DaData** и **REST + Bearer**.
+
+### Виджет (микрофронтенд)
+- `form-widget.js` — самодостаточный бандл, регистрирует `<no-code-form>`.
+- **Shadow DOM** + `@ant-design/cssinjs` → полная изоляция стилей.
+- Схема + токены + справочники грузятся по `form-id`; API-справочники и загрузка
+  файлов идут через backend-proxy.
+- **JS API**: `getValues/setValues/validate/reset/submit/destroy`.
+- **События**: `form:ready`, `form:change`, `form:submit`, `form:error`.
+- Атрибуты-оверрайды: `primary-color`, `border-radius`, `api-base`.
+
+```html
+<script src="https://forms.acme.com/form-widget.js"></script>
+<no-code-form form-id="order_form"></no-code-form>
+```
+
+### Доставка данных (execute-worker + доска)
+- Submit пишет заполнение в БД и кладёт задачу в **outbox**.
+- Отдельный **воркер** доставляет на webhook клиента с **HMAC-подписью**,
+  retry + экспоненциальный backoff.
+- Доски в админке: «Заполнения» и «Доставки (worker)» с живым статусом.
+
+### Аккаунты и доступ
+- **Регистрация/вход** (JWT), у каждого пользователя свой аккаунт.
+- Все админ-эндпоинты **изолированы по аккаунту** (multi-tenancy).
+- `form-id` — глобальный публичный ключ встраивания; публичный рендер формы
+  и приём данных не требуют авторизации.
+
+---
+
+## Тестовый контур (GRACE — прагматичное ядро)
+
+Критерий «зелёный отчёт ≠ доказательство». Реализованы:
+
+- **Property-based инварианты** (Hypothesis): движок формул, работа с секретами.
+- **Infra-тир на реальной БД** — API-тесты против настоящего PostgreSQL.
+- **honest-NA** — при недоступной БД интеграционные тесты SKIP, а не молча PASS.
+- **Security-тир** — изоляция аккаунтов, отсутствие исполнения кода в формулах,
+  нераскрытие секретов подключений.
+- **Статический гейт** — ruff; CI прогоняет оба яруса + typecheck/build фронта
+  + сборку виджета.
+
+```bash
+cd backend && pip install -r requirements.txt
+TEST_DATABASE_URL=postgresql+asyncpg://forms:forms@localhost:5432/forms_test pytest -q
+```
+
+---
+
+## Архитектура
+
+```
+frontend (React+Ant)          backend (FastAPI)               worker
+┌───────────────────┐  /api   ┌────────────────────┐         ┌──────────────────┐
+│ Конструктор + auth │◄──────►│ auth (JWT)          │         │ execute-worker    │
+│  · дерево полей     │  admin │ CRUD (по аккаунту)  │         │ (webhook outbox)  │
+│  · живой preview    │        │ public: schema+токены│  ──►   │ POST + HMAC,      │
+│ Виджет <no-code-form>│ public │ submit → outbox     │ outbox  │ retry+backoff     │
+│  · Shadow DOM       │◄──────►│ proxy (секреты,кэш) │ таблица └────────┬─────────┘
+└───────────────────┘        └─────────┬──────────┘  PostgreSQL ◄──────┘ webhook клиента
+                                       ▼                Redis (кэш, rate-limit)
+```
+
+## Замечания по безопасности (демо)
+- JWT/HMAC-секрет и Fernet-ключ заданы дефолтами для демо — задайте
+  `WEBHOOK_HMAC_SECRET` и `SECRET_KEY` в проде.
+- Proxy ограничивается whitelist'ом подключения; для прод-развёртывания
+  добавьте блокировку приватных сетей (SSRF) — в демо loopback разрешён, т.к.
+  встроенный mock внешнего API живёт на самом backend.
+
+---
+
+## API (основное)
+
+| Метод | Endpoint | Назначение |
+|---|---|---|
+| POST | `/api/auth/register` · `/login` · GET `/me` | Аккаунты |
+| GET/POST/PUT/DELETE | `/api/forms[/:id]` | CRUD форм (по аккаунту) |
+| GET/POST | `/api/forms/:id/export` · `/api/forms/import` | Экспорт/импорт JSON |
+| GET/POST/PUT/DELETE | `/api/dictionaries[/:id]` (+ `/test`) | Справочники |
+| GET/POST/PUT/DELETE | `/api/connections[/:id]` | Подключения (секреты шифруются) |
+| GET/PUT | `/api/account/theme` | Токены дизайна |
+| GET | `/api/public/forms/:formId` | Схема + токены + справочники (виджет) |
+| POST | `/api/public/forms/:formId/submit` | Приём заполнения |
+| POST | `/api/public/dictionaries/:id/options` | Опции API-справочника |
+| POST/GET | `/api/public/files` · `/:id` | Загрузка/выдача файлов |
+| POST | `/api/proxy/:connectionId` | Proxy (whitelist + rate-limit + кэш) |
+| GET | `/api/submissions[/:id]` | Заполнения / одно как JSON |
+| GET | `/api/submissions/deliveries/board` | Доска доставок вебхуков |
+```

@@ -1,0 +1,60 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: forms
+      POSTGRES_PASSWORD: forms
+      POSTGRES_DB: forms
+    # No host port mapping: only the backend/worker reach it over the internal
+    # network (db:5432). Avoids clashing with a local Postgres on the host.
+    # To inspect from the host, uncomment:  ports: ["5433:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U forms"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    # Internal only (redis:6379). Uncomment to expose:  ports: ["6380:6379"]
+
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+asyncpg://forms:forms@db:5432/forms
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    # Host port is configurable to avoid clashes: API_PORT=8010 docker compose up
+    ports:
+      - "${API_PORT:-8000}:8000"
+
+  worker:
+    build: ./backend
+    command: python -m app.worker.webhook_worker
+    environment:
+      DATABASE_URL: postgresql+asyncpg://forms:forms@db:5432/forms
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      db:
+        condition: service_healthy
+      backend:
+        condition: service_started
+
+  frontend:
+    build: ./frontend
+    environment:
+      BACKEND_URL: http://backend:8000
+    depends_on:
+      - backend
+    # Configurable too: WEB_PORT=5180 docker compose up
+    ports:
+      - "${WEB_PORT:-5173}:5173"
+
+volumes:
+  pgdata:
