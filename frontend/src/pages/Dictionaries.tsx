@@ -153,7 +153,10 @@ export default function Dictionaries() {
         <AntForm form={form} layout="vertical">
           <Row gutter={12}>
             <Col span={12}><AntForm.Item name="name" label="Название" rules={[{ required: true }]}><Input /></AntForm.Item></Col>
-            <Col span={12}><AntForm.Item name="code" label="Код" rules={[{ required: true }]}><Input /></AntForm.Item></Col>
+            <Col span={12}><AntForm.Item name="code" label="Код справочника" rules={[{ required: true }]}
+              tooltip="Технический идентификатор справочника (латиницей). Пользователь его не видит.">
+              <Input placeholder="contact_method" />
+            </AntForm.Item></Col>
           </Row>
           <AntForm.Item name="type" label="Тип" initialValue="manual">
             <Select options={[{ label: 'Ручной', value: 'manual' }, { label: 'API', value: 'api' }]} />
@@ -295,14 +298,50 @@ export default function Dictionaries() {
             </Card>
           )}
 
-          <Typography.Text strong>Атрибуты значений</Typography.Text>
+          {/* Значения — главное для ручного справочника. Идёт первым. */}
+          {type !== 'api' && (
+            <>
+              <Typography.Text strong>Значения списка</Typography.Text>
+              <Typography.Paragraph type="secondary" style={{ fontSize: 12, margin: '2px 0 6px' }}>
+                Варианты, которые увидит пользователь. <b>Код</b> — для системы (латиницей, без пробелов), <b>Метка</b> — текст для человека.
+              </Typography.Paragraph>
+              <AntForm.List name="items">
+                {(fields, { add, remove }) => (
+                  <div style={{ marginTop: 4, marginBottom: 12 }}>
+                    {fields.length > 0 && (
+                      <Space style={{ display: 'flex', marginBottom: 2 }}>
+                        <span style={{ width: 130, fontSize: 11, color: '#999' }}>Код (для системы)</span>
+                        <span style={{ width: 170, fontSize: 11, color: '#999' }}>Метка (для человека)</span>
+                      </Space>
+                    )}
+                    {fields.map((f) => (
+                      <Space key={f.key} align="baseline" style={{ display: 'flex', marginTop: 4 }} wrap>
+                        <AntForm.Item {...f} name={[f.name, 'code']} noStyle><Input placeholder="ochno" style={{ width: 130 }} /></AntForm.Item>
+                        <AntForm.Item {...f} name={[f.name, 'label']} noStyle><Input placeholder="Очно" style={{ width: 170 }} /></AntForm.Item>
+                        <AntForm.Item {...f} name={[f.name, 'parentValue']} noStyle><Input placeholder="parent (каскад)" style={{ width: 110 }} /></AntForm.Item>
+                        <AntForm.Item {...f} name={[f.name, 'attrs']} noStyle><Input placeholder='{"cost":500}' style={{ width: 130 }} /></AntForm.Item>
+                        <DeleteOutlined onClick={() => remove(f.name)} />
+                      </Space>
+                    ))}
+                    <Button size="small" type="dashed" icon={<PlusOutlined />} onClick={() => add({ attrs: '{}' })} style={{ marginTop: 6 }}>Добавить значение</Button>
+                  </div>
+                )}
+              </AntForm.List>
+            </>
+          )}
+
+          {/* Необязательные, продвинутые настройки — ниже. */}
+          <Typography.Text strong>Атрибуты значений <Tag>необязательно</Tag></Typography.Text>
+          <Typography.Paragraph type="secondary" style={{ fontSize: 12, margin: '2px 0 6px' }}>
+            Доп. поля-колонки к каждому значению (цена, срок) — <b>это не сами варианты</b>. Для обычного списка не нужно.
+          </Typography.Paragraph>
           <AntForm.List name="attrs">
             {(fields, { add, remove }) => (
               <div style={{ marginBottom: 12 }}>
                 {fields.map((f) => (
                   <Space key={f.key} align="baseline" style={{ display: 'flex', marginTop: 4 }}>
-                    <AntForm.Item {...f} name={[f.name, 'name']} noStyle><Input placeholder="name" /></AntForm.Item>
-                    <AntForm.Item {...f} name={[f.name, 'label']} noStyle><Input placeholder="Метка" /></AntForm.Item>
+                    <AntForm.Item {...f} name={[f.name, 'name']} noStyle><Input placeholder="имя атрибута (лат.), напр. cost" style={{ width: 220 }} /></AntForm.Item>
+                    <AntForm.Item {...f} name={[f.name, 'label']} noStyle><Input placeholder="Метка, напр. Цена" /></AntForm.Item>
                     <AntForm.Item {...f} name={[f.name, 'type']} noStyle initialValue="number">
                       <Select style={{ width: 110 }} options={[{ label: 'число', value: 'number' }, { label: 'строка', value: 'string' }]} />
                     </AntForm.Item>
@@ -314,14 +353,17 @@ export default function Dictionaries() {
             )}
           </AntForm.List>
 
-          <Typography.Text strong>Зависимость (каскад)</Typography.Text>
+          <Typography.Text strong>Зависимость (каскад) <Tag>необязательно</Tag></Typography.Text>
+          <Typography.Paragraph type="secondary" style={{ fontSize: 12, margin: '2px 0 6px' }}>
+            Список зависит от значения другого поля формы. Для простого справочника не нужно.
+          </Typography.Paragraph>
           <AntForm.List name="dependencies">
             {(fields, { add, remove }) => (
               <div style={{ marginBottom: 12 }}>
                 {fields.map((f) => (
                   <Space key={f.key} align="baseline" style={{ display: 'flex', marginTop: 4 }}>
-                    <AntForm.Item {...f} name={[f.name, 'fieldId']} noStyle><Input placeholder="fieldId родителя (напр. f_region)" /></AntForm.Item>
-                    <AntForm.Item {...f} name={[f.name, 'paramName']} noStyle><Input placeholder="paramName" /></AntForm.Item>
+                    <AntForm.Item {...f} name={[f.name, 'fieldId']} noStyle><Input placeholder="id родительского поля (напр. f_region)" style={{ width: 260 }} /></AntForm.Item>
+                    <AntForm.Item {...f} name={[f.name, 'paramName']} noStyle><Input placeholder="имя параметра" /></AntForm.Item>
                     <DeleteOutlined onClick={() => remove(f.name)} />
                   </Space>
                 ))}
@@ -329,28 +371,6 @@ export default function Dictionaries() {
               </div>
             )}
           </AntForm.List>
-
-          {type !== 'api' && (
-            <>
-              <Typography.Text strong>Значения</Typography.Text>
-              <AntForm.List name="items">
-                {(fields, { add, remove }) => (
-                  <div style={{ marginTop: 4 }}>
-                    {fields.map((f) => (
-                      <Space key={f.key} align="baseline" style={{ display: 'flex', marginTop: 4 }} wrap>
-                        <AntForm.Item {...f} name={[f.name, 'code']} noStyle><Input placeholder="код" style={{ width: 110 }} /></AntForm.Item>
-                        <AntForm.Item {...f} name={[f.name, 'label']} noStyle><Input placeholder="Метка" style={{ width: 150 }} /></AntForm.Item>
-                        <AntForm.Item {...f} name={[f.name, 'parentValue']} noStyle><Input placeholder="parent" style={{ width: 90 }} /></AntForm.Item>
-                        <AntForm.Item {...f} name={[f.name, 'attrs']} noStyle><Input placeholder='{"cost":500}' style={{ width: 150 }} /></AntForm.Item>
-                        <DeleteOutlined onClick={() => remove(f.name)} />
-                      </Space>
-                    ))}
-                    <Button size="small" icon={<PlusOutlined />} onClick={() => add({ attrs: '{}' })} style={{ marginTop: 4 }}>Значение</Button>
-                  </div>
-                )}
-              </AntForm.List>
-            </>
-          )}
         </AntForm>
       </Drawer>
     </Card>
