@@ -98,6 +98,9 @@ export interface SuggestConfig {
   labelTemplate?: string;
   subtitleTemplate?: string;
   fill?: SuggestFill[];   // auto-fill other fields on select
+  // When set, the field value is stored as an object instead of a string.
+  // e.g. storeAs: 'object' → {id: "u1", name: "Иванов"}
+  storeAs?: 'string' | 'object';
 }
 
 export interface DictAttr {

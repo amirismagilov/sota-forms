@@ -1,4 +1,4 @@
-import { PlusOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { DeleteOutlined, EditOutlined, PlusOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import {
   Alert, App, Button, Card, Col, Drawer, Form as AntForm, Input, InputNumber, Row, Select, Space, Table, Tag, Tooltip, Typography,
 } from 'antd';
@@ -122,25 +122,30 @@ export default function Connections() {
         Общий раздел аккаунта — интеграции и секреты доступны всем формам, секреты хранятся зашифрованными.
       </Typography.Paragraph>
       <Table
+        scroll={{ x: 'max-content' }}
         rowKey="id" dataSource={conns} pagination={false}
         columns={[
-          { title: 'Название', dataIndex: 'name' },
-          { title: 'URL', dataIndex: 'base_url', render: (v) => <code>{v}</code> },
-          { title: 'Auth', dataIndex: 'auth_type', render: (v) => <Tag>{v}</Tag> },
-          { title: 'Секрет', render: (_, r) => r.auth_config?.token === '__set__' || r.auth_config?.password === '__set__' ? <Tag color="green">скрыт ✓</Tag> : '—' },
-          { title: 'Whitelist', render: (_, r) => (r.whitelist || []).length },
-          { title: 'Проверка', render: (_, r) => testTag(r.id) },
+          { title: 'Название', dataIndex: 'name', width: 160, ellipsis: true },
+          { title: 'URL', dataIndex: 'base_url', width: 220, ellipsis: true, render: (v) => <code style={{ wordBreak: 'break-all' }}>{v}</code> },
+          { title: 'Auth', dataIndex: 'auth_type', width: 120, render: (v) => <Tag>{v}</Tag> },
+          { title: 'Секрет', width: 100, render: (_, r) => r.auth_config?.token === '__set__' || r.auth_config?.password === '__set__' ? <Tag color="green">скрыт ✓</Tag> : '—' },
+          { title: 'Whitelist', width: 90, render: (_, r) => (r.whitelist || []).length },
+          { title: 'Проверка', width: 120, render: (_, r) => testTag(r.id) },
           {
-            title: '', width: 240, render: (_, r) => (
-              <Space>
-                <Button
-                  size="small" icon={<ThunderboltOutlined />}
-                  loading={testingId === r.id} onClick={() => runTest(r.id)}
-                >
-                  Проверить
-                </Button>
-                <Button size="small" onClick={() => openEditor(r)}>Изменить</Button>
-                <Button size="small" danger onClick={async () => { await deleteConnection(r.id); load(); }}>Удалить</Button>
+            title: '', width: 120, align: 'center' as const, render: (_, r) => (
+              <Space size={4}>
+                <Tooltip title="Проверить">
+                  <Button
+                    size="small" type="text" icon={<ThunderboltOutlined />}
+                    loading={testingId === r.id} onClick={() => runTest(r.id)}
+                  />
+                </Tooltip>
+                <Tooltip title="Изменить">
+                  <Button size="small" type="text" icon={<EditOutlined />} onClick={() => openEditor(r)} />
+                </Tooltip>
+                <Tooltip title="Удалить">
+                  <Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={async () => { await deleteConnection(r.id); load(); }} />
+                </Tooltip>
               </Space>
             ),
           },

@@ -447,6 +447,13 @@ export default function FormEditor() {
                   <Input placeholder="value" />
                 </AntForm.Item></Col>
               </Row>
+              <AntForm.Item name={['suggest', 'storeAs']} label="Сохранять как" initialValue="string"
+                tooltip="«Строка» — только valueField. «Объект» — {id, name} в JSON при отправке.">
+                <Select options={[
+                  { label: 'Строка (только значение)', value: 'string' },
+                  { label: 'Объект {id + имя}', value: 'object' },
+                ]} />
+              </AntForm.Item>
               <AntForm.Item name={['suggest', 'labelTemplate']} label="Что показать в списке (основная строка)"
                 tooltip="Шаблон с {{путь}}: {{value}}, {{data.inn}} и т.д. Пусто = поле «Показать».">
                 <Input placeholder="{{value}}" style={{ fontFamily: 'monospace', fontSize: 12 }} />
