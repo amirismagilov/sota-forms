@@ -49,6 +49,21 @@ def _dig(node: object, path: str) -> object:
     return node
 
 
+# Sensible field names to fall back to when the configured code/label field
+# isn't present in the response — so a dictionary "just works" with defaults.
+_CODE_CANDIDATES = ("id", "code", "value", "key", "uuid", "sku")
+_LABEL_CANDIDATES = ("name", "title", "label", "value", "fio", "full_name", "text")
+
+
+def _pick(item: dict, configured: str, candidates: tuple[str, ...]) -> object:
+    if configured in item and item[configured] is not None:
+        return item[configured]
+    for c in candidates:
+        if item.get(c) is not None:
+            return item[c]
+    return None
+
+
 def apply_mapping(raw: object, mapping: dict) -> list[dict]:
     node = _dig(raw, mapping.get("path", ""))
     if not isinstance(node, list):
@@ -59,9 +74,16 @@ def apply_mapping(raw: object, mapping: dict) -> list[dict]:
     out = []
     for it in node:
         if not isinstance(it, dict):
+            out.append({"code": str(it), "label": str(it), "attrs": {}})
             continue
+        code = _pick(it, code_f, _CODE_CANDIDATES)
+        label = _pick(it, val_f, _LABEL_CANDIDATES)
+        if code is None:
+            code = next(iter(it.values()), "")
+        if label is None:
+            label = code
         attrs = {name: it.get(src) for name, src in attr_map.items()} if attr_map else it
-        out.append({"code": str(it.get(code_f, "")), "label": str(it.get(val_f, "")), "attrs": attrs})
+        out.append({"code": str(code), "label": str(label), "attrs": attrs})
     return out
 
 
