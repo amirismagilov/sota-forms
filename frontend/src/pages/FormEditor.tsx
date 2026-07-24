@@ -717,6 +717,11 @@ function fieldToForm(f: Field): any {
     validation: f.validation || {},
     options: f.options || [],
     calcDecimals: f.calcDecimals ?? 2,
+    // Explicitly seed nested config objects so a NEW field never inherits the
+    // previously-edited field's suggest/sameAs settings (resetFields alone can't
+    // clear inputs that aren't mounted yet).
+    suggest: f.suggest || {},
+    sameAs: f.sameAs || {},
   };
 }
 
@@ -734,5 +739,8 @@ function formToField(vals: any, prev: Field): Field {
   if (!vals.visibleIf?.fieldId) delete out.visibleIf;
   if (!vals.requiredIf?.fieldId) delete out.requiredIf;
   if (vals.validation && Object.values(vals.validation).every((x) => x === undefined || x === null)) delete out.validation;
+  // Keep nested config only on the field type that uses it.
+  if (out.type !== 'suggest') delete out.suggest;
+  if (out.type !== 'same_as') delete out.sameAs;
   return out;
 }
