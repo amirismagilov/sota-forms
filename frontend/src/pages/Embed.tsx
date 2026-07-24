@@ -1,5 +1,5 @@
 import { ReloadOutlined } from '@ant-design/icons';
-import { Alert, Button, Card, Col, ColorPicker, Input, Row, Select, Space, Typography } from 'antd';
+import { Alert, Button, Card, Col, Input, Row, Select, Space, Typography } from 'antd';
 import { useEffect, useRef, useState } from 'react';
 import { listForms } from '../api';
 
@@ -20,7 +20,7 @@ function LiveWidget({ formId, primaryColor }: { formId: string; primaryColor?: s
 export default function Embed() {
   const [forms, setForms] = useState<any[]>([]);
   const [formId, setFormId] = useState('order_form');
-  const [color, setColor] = useState<string | undefined>();
+  const color: string | undefined = undefined; // primary-color customization removed
   const [received, setReceived] = useState<any[]>([]);
 
   useEffect(() => {
@@ -42,9 +42,6 @@ export default function Embed() {
             <span>Форма:
               <Select style={{ width: 200, marginLeft: 8 }} value={formId} onChange={setFormId}
                 options={forms.map((f) => ({ label: `${f.title} (${f.form_id})`, value: f.form_id }))} />
-            </span>
-            <span>primary-color:
-              <ColorPicker style={{ marginLeft: 8 }} showText onChange={(_, hex) => setColor(hex)} />
             </span>
           </Space>
           <Alert type="info" showIcon style={{ marginBottom: 16 }}

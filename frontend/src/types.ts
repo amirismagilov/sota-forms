@@ -50,6 +50,7 @@ export interface Field {
   tooltip?: string | null;
   required?: boolean;
   readOnly?: boolean;
+  defaultValue?: any;
   requiredMessage?: string | null;
   mask?: FieldMask;
   validation?: FieldValidation;

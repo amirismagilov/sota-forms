@@ -345,6 +345,10 @@ export default function FormEditor() {
               <AntForm.Item name="placeholder" label="Placeholder"><Input /></AntForm.Item>
               <AntForm.Item name="hint" label="Подсказка под полем"><Input /></AntForm.Item>
               <AntForm.Item name="tooltip" label="Tooltip (иконка ?)"><Input /></AntForm.Item>
+              <AntForm.Item name="defaultValue" label="Значение по умолчанию"
+                tooltip="Подставляется в поле при открытии формы. Для списков — код значения; для чекбокса — true/false.">
+                <Input placeholder="необязательно" />
+              </AntForm.Item>
             </>
           )}
 
@@ -528,10 +532,19 @@ export default function FormEditor() {
           )}
 
           {(['text', 'textarea', 'phone', 'inn', 'snils', 'passport', 'bik', 'kpp', 'ogrn', 'card'].includes(editType)) && (
-            <Row gutter={12}>
-              <Col span={12}><AntForm.Item name={['validation', 'minLength']} label="Мин. длина"><InputNumber style={{ width: '100%' }} /></AntForm.Item></Col>
-              <Col span={12}><AntForm.Item name={['validation', 'maxLength']} label="Макс. длина"><InputNumber style={{ width: '100%' }} /></AntForm.Item></Col>
-            </Row>
+            <>
+              <Row gutter={12}>
+                <Col span={12}><AntForm.Item name={['validation', 'minLength']} label="Мин. длина"><InputNumber style={{ width: '100%' }} /></AntForm.Item></Col>
+                <Col span={12}><AntForm.Item name={['validation', 'maxLength']} label="Макс. длина"><InputNumber style={{ width: '100%' }} /></AntForm.Item></Col>
+              </Row>
+              <AntForm.Item name={['mask', 'regex']} label="Своя маска (regex)"
+                tooltip="Регулярное выражение, которому должно соответствовать значение. Напр. ^\\d{4}$ — ровно 4 цифры.">
+                <Input placeholder="^\\d{4}$" style={{ fontFamily: 'monospace' }} />
+              </AntForm.Item>
+              <AntForm.Item name={['validation', 'regexMessage']} label="Сообщение при несоответствии">
+                <Input placeholder="Напр.: введите 4 цифры" />
+              </AntForm.Item>
+            </>
           )}
           {['number', 'amount', 'slider'].includes(editType) && (
             <Row gutter={12}>
@@ -722,15 +735,18 @@ function fieldToForm(f: Field): any {
     // clear inputs that aren't mounted yet).
     suggest: f.suggest || {},
     sameAs: f.sameAs || {},
+    mask: f.mask || {},
   };
 }
 
 function formToField(vals: any, prev: Field): Field {
   const out: Field = { ...prev, ...vals };
-  // Auto-apply mask regex for special types.
+  // Apply the preset's mask regex, but keep a user-entered custom regex if set.
   if (MASK_PRESETS[vals.type]) {
-    out.mask = { preset: vals.type, regex: MASK_PRESETS[vals.type].regex };
+    out.mask = { ...vals.mask, preset: vals.type, regex: vals.mask?.regex || MASK_PRESETS[vals.type].regex };
   }
+  // Drop an empty mask object so plain fields stay clean.
+  if (out.mask && !out.mask.regex && !out.mask.pattern && !out.mask.preset) delete out.mask;
   // Display is derived from the dictionary field type (single source of truth),
   // so «Тип поля» and how it renders can never disagree.
   if (DICT_TYPES.includes(out.type)) {

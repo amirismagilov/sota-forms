@@ -106,6 +106,24 @@ const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
     return c;
   }, [values, attrs, schema.fields]);
 
+  // Seed default values when the form loads (only for fields not yet touched).
+  useEffect(() => {
+    setValues((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const f of schema.fields) {
+        if (f.defaultValue === undefined || f.defaultValue === '' || next[f.id] !== undefined) continue;
+        let dv: any = f.defaultValue;
+        if (dv === 'true') dv = true;
+        else if (dv === 'false') dv = false;
+        else if ((f.type === 'number' || f.type === 'amount') && dv !== '' && !isNaN(Number(dv))) dv = Number(dv);
+        next[f.id] = dv;
+        changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [schema.fields]);
+
   // Load API-dictionary options when their dependency values change.
   useEffect(() => {
     if (!apiDictLoader) return;
