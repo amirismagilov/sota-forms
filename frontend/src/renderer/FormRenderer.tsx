@@ -427,7 +427,10 @@ const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
   function suggestControl(f: Field) {
     const cfg = f.suggest || {};
     const min = cfg.minChars ?? 3;
-    const v = values[f.id];
+    const rawV = values[f.id];
+    const v = (cfg.storeAs === 'object' && rawV && typeof rawV === 'object')
+      ? String(rawV[cfg.labelField || 'name'] ?? rawV[cfg.valueField || 'id'] ?? '')
+      : rawV;
     const busy = !!suggestBusy[f.id];
     const opts = (suggestOpts[f.id] || []).map((it) => {
       const primary = cfg.labelTemplate ? fillTemplate(cfg.labelTemplate, it.data) : it.label;
@@ -474,7 +477,15 @@ const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
         onSelect={(val, option: any) => {
           // Store the picked value and auto-fill related fields from its data.
           const item: SuggestItem | undefined = option?.item;
-          const patch: Record<string, any> = { [f.id]: val };
+          let fieldValue: any = val;
+          if (cfg.storeAs === 'object' && item) {
+            // Store both id (valueField) and name (labelField) as an object.
+            fieldValue = {
+              [cfg.valueField || 'id']: val,
+              [cfg.labelField || 'name']: item.label,
+            };
+          }
+          const patch: Record<string, any> = { [f.id]: fieldValue };
           if (item && cfg.fill?.length) {
             for (const fm of cfg.fill) {
               if (!fm.fieldId) continue;
