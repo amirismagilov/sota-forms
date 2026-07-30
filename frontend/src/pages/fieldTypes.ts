@@ -55,7 +55,10 @@ export const FIELD_TYPE_GROUPS: { label: string; options: { label: string; value
   },
   {
     label: 'Вычисления',
-    options: [{ label: 'Вычисляемое поле', value: 'calculated' }],
+    options: [
+      { label: 'Вычисляемое поле', value: 'calculated' },
+      { label: 'Проверка во внешней системе', value: 'api_check' },
+    ],
   },
   {
     label: 'Компоновка',

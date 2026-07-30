@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..bpmn_client import auth_headers
+from ..checks import run_check
 from ..config import get_settings
 from ..crypto import sign_payload
 from ..db import get_db
@@ -158,6 +159,47 @@ async def form_by_operaton_id(operaton_form_id: str, db: AsyncSession = Depends(
         "published_version": f.published_version,
         "process_key": (f.source_meta or {}).get("process_key"),
     }
+
+
+@router.post("/forms/{form_id}/check")
+async def form_check(form_id: str, body: dict | None = None, db: AsyncSession = Depends(get_db)):
+    """Run an `api_check` field of a published form (ФР: адаптивные формы).
+
+    The endpoint, request body template and connection live in the published
+    snapshot — the widget sends only the field id and current values, so the
+    external system's credentials never reach the browser.
+    """
+    body = body or {}
+    field_id = body.get("fieldId")
+    values = body.get("values") or {}
+
+    if not await check_rate_limit(f"check:{form_id}", limit=120):
+        raise HTTPException(429, "rate limit exceeded")
+
+    f = (await db.execute(select(Form).where(Form.form_id == form_id))).scalar_one_or_none()
+    if not f or f.status == "archived" or not f.published_version:
+        raise HTTPException(404, "form not available")
+    snap = (
+        await db.execute(
+            select(FormVersion).where(FormVersion.form_pk == f.id, FormVersion.version == f.published_version)
+        )
+    ).scalar_one_or_none()
+    if not snap:
+        raise HTTPException(404, "published version missing")
+
+    field = next(
+        (x for x in (snap.fields or []) if x.get("id") == field_id and x.get("type") == "api_check"),
+        None,
+    )
+    if not field:
+        raise HTTPException(404, "check field not configured")
+
+    try:
+        return await run_check(db, field.get("check") or {}, values)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, f"check source error: {exc}") from exc
 
 
 @router.post("/dictionaries/{dict_id}/options")

@@ -120,6 +120,13 @@ export const probeDictionary = (body: { api_config: any; dependencies?: any[]; v
 // Suggest typeahead against an inline (unsaved) field config — preview + field-editor test.
 export const probeSuggest = (body: { suggest: any; query: string; values?: Record<string, any> }) =>
   api.post('/suggest/probe', body).then((r) => r.data as { ok: boolean; items?: { value: string; label: string; data: any }[]; raw?: any; error?: string });
+// Try an api_check config before the form is published, so a wrong response path
+// is found in the editor rather than by a live user.
+export const probeCheck = (body: { check: any; values?: Record<string, any> }) =>
+  api.post('/checks/probe', body).then((r) => r.data as { ok: boolean; data?: any; error?: string });
+export const runFormCheck = (formId: string, fieldId: string, values: Record<string, any>) =>
+  api.post(`/public/forms/${formId}/check`, { fieldId, values })
+    .then((r) => r.data as { ok: boolean; data?: any });
 export const uploadFile = (file: File) => {
   const fd = new FormData();
   fd.append('file', file);

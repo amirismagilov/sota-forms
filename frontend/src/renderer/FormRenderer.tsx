@@ -32,7 +32,7 @@ import { validateFileMeta, validateImageDims } from './validateFile';
 const { Title, Paragraph } = Typography;
 
 const LAYOUT = ['section_header', 'divider', 'info_text'];
-const FULL_WIDTH = [...LAYOUT, 'textarea', 'calculated', 'signature'];
+const FULL_WIDTH = [...LAYOUT, 'textarea', 'calculated', 'signature', 'api_check'];
 // Поля с плавающим лейблом (стиль референса). Остальные (checkbox, radio,
 // slider, switch, rating, color, file, signature) — с лейблом сверху.
 const FLOAT_LABEL = new Set([
@@ -61,6 +61,8 @@ interface Props {
   showTitle?: boolean;
   apiDictLoader?: (dictId: string, values: Record<string, any>) => Promise<{ code: string; label: string; attrs?: any }[]>;
   suggestLoader?: (field: Field, query: string, values: Record<string, any>) => Promise<SuggestItem[]>;
+  /** Runs an `api_check` field against the external system. */
+  checkRunner?: (field: Field, values: Record<string, any>) => Promise<{ ok: boolean; data?: any; error?: string }>;
   fileUpload?: (file: File) => Promise<{ id: string; url: string; filename: string; size: number }>;
 }
 
@@ -68,9 +70,10 @@ type DictItem = { code: string; label: string; attrs?: any };
 type SuggestItem = { value: string; label: string; data: any };
 
 const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
-  { schema, dictionaries, initialValues, onSubmit, onChange, onError, showTitle = true, apiDictLoader, suggestLoader, fileUpload },
+  { schema, dictionaries, initialValues, onSubmit, onChange, onError, showTitle = true, apiDictLoader, suggestLoader, checkRunner, fileUpload },
   ref,
 ) {
+  const [checkState, setCheckState] = useState<Record<string, { loading?: boolean; error?: string }>>({});
   const [values, setValues] = useState<Record<string, any>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
@@ -202,18 +205,42 @@ const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
         const dep = dictById[f.dictionaryId]?.dependencies?.[0];
         if (dep && dep.fieldId === field.id) delete nextVals[f.id];
       }
+      // A verdict obtained for OTHER answers must not keep driving the form:
+      // change an input the check depends on and its result is dropped, hiding
+      // whatever it had revealed until the user checks again.
+      if (f.type === 'api_check' && (f.check?.dependsOn || []).includes(field.id)) {
+        delete nextVals[f.id];
+      }
     }
     setValues(nextVals);
     setErrors((e) => ({ ...e, [field.id]: '' }));
     onChange?.(field.id, v, nextVals);
   };
 
-  const isVisible = (f: Field) => !hiddenBySameAs.has(f.id) && evalCondition(f.visibleIf, computed);
+  const sectionById = useMemo(() => {
+    const m: Record<string, Field> = {};
+    for (const f of schema.fields) if (f.type === 'section_header') m[f.id] = f;
+    return m;
+  }, [schema.fields]);
+
+  const isVisible = (f: Field): boolean => {
+    if (hiddenBySameAs.has(f.id)) return false;
+    if (!evalCondition(f.visibleIf, computed)) return false;
+    // A field can live inside a section and inherit its rule, so one condition
+    // governs a whole block instead of being copied onto every field.
+    const section = f.inSection ? sectionById[f.inSection] : undefined;
+    if (section && section.id !== f.id && !evalCondition(section.visibleIf, computed)) return false;
+    return true;
+  };
   const isRequired = (f: Field) => !!f.required || (!!f.requiredIf && evalCondition(f.requiredIf, computed));
 
   function validateField(f: Field): string {
     const v = computed[f.id];
     const empty = v === undefined || v === null || v === '' || (Array.isArray(v) && v.length === 0);
+    // A required check gates submission: «нельзя отправить, пока не проверили».
+    if (f.type === 'api_check') {
+      return isRequired(f) && empty ? (f.requiredMessage || 'Выполните проверку') : '';
+    }
     if (isRequired(f) && empty) return f.requiredMessage || 'Обязательное поле';
     if (empty) return '';
     const val = f.validation || {};
@@ -262,7 +289,9 @@ const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
     try {
       const payload: Record<string, any> = {};
       for (const f of schema.fields) {
-        if (LAYOUT.includes(f.type) || !isVisible(f)) continue;
+        // The check verdict is derived data, not an answer: sending it would
+        // create a process variable nobody declared in the BPMN.
+        if (LAYOUT.includes(f.type) || f.type === 'api_check' || !isVisible(f)) continue;
         payload[f.id] = computed[f.id];
       }
       const res = await onSubmit(payload);
@@ -552,9 +581,49 @@ const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
     );
   }
 
+  /** «Проверить» — ask the external system, then let conditions read the answer. */
+  function checkControl(f: Field) {
+    const state = checkState[f.id];
+    const done = values[f.id] !== undefined && values[f.id] !== null;
+    return (
+      <div>
+        <div style={{ marginBottom: 6 }}>{label(f)}</div>
+        {f.check?.hintBefore && (
+          <Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 8 }}>{f.check.hintBefore}</Paragraph>
+        )}
+        <Button
+          type={done ? 'default' : 'primary'}
+          loading={!!state?.loading}
+          disabled={!checkRunner}
+          onClick={async () => {
+            if (!checkRunner) return;
+            setCheckState((s) => ({ ...s, [f.id]: { loading: true } }));
+            try {
+              const res = await checkRunner(f, computed);
+              if (res.ok) {
+                setValue(f, res.data ?? {});
+                setCheckState((s) => ({ ...s, [f.id]: { loading: false } }));
+              } else {
+                setCheckState((s) => ({ ...s, [f.id]: { loading: false, error: res.error || 'Проверка не удалась' } }));
+              }
+            } catch (e: any) {
+              setCheckState((s) => ({ ...s, [f.id]: { loading: false, error: e?.message || 'Проверка не удалась' } }));
+            }
+          }}
+        >
+          {done ? (f.check?.buttonLabel ? `${f.check.buttonLabel} ещё раз` : 'Проверить ещё раз') : (f.check?.buttonLabel || 'Проверить')}
+        </Button>
+        {state?.error && <Alert type="error" showIcon style={{ marginTop: 8 }} message={state.error} />}
+        {errors[f.id] && <div style={{ color: '#ff4d4f', fontSize: 12, marginTop: 6 }}>{errors[f.id]}</div>}
+      </div>
+    );
+  }
+
   function renderField(f: Field): React.ReactNode {
     const v = values[f.id];
     switch (f.type) {
+      case 'api_check':
+        return checkControl(f);
       case 'section_header':
         return <Title level={f.headingLevel || 3} style={{ marginBottom: 0, marginTop: 8 }}>{f.label}</Title>;
       case 'divider':

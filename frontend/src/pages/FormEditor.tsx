@@ -12,6 +12,7 @@ import {
 import {
   Alert,
   App,
+  AutoComplete,
   Button,
   Card,
   Col,
@@ -31,11 +32,11 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import {
-  getDictOptions, getForm, getTheme, listConnections, listDictionaries, listVersions, probeSuggest,
+  getDictOptions, getForm, getTheme, listConnections, listDictionaries, listVersions, probeCheck, probeSuggest,
   publishForm, rollbackForm, updateForm, uploadFile,
 } from '../api';
 import { extractRefs } from '../renderer/engine';
-import type { Connection, Dictionary, Field, FormSchema, FormVersionInfo } from '../types';
+import type { Condition, ConditionNode, Connection, Dictionary, Field, FormSchema, FormVersionInfo } from '../types';
 import ThemedForm from '../widget/ThemedForm';
 import { FIELD_TYPE_GROUPS, MASK_PRESETS, OPERATORS } from './fieldTypes';
 import LayoutEditor, { ensureLayout } from './LayoutEditor';
@@ -65,6 +66,7 @@ export default function FormEditor() {
   const [versions, setVersions] = useState<FormVersionInfo[]>([]);
   const [leftView, setLeftView] = useState<'fields' | 'layout'>('fields');
   const [suggestTest, setSuggestTest] = useState<any>(null);
+  const [checkTest, setCheckTest] = useState<any>(null);
 
   useEffect(() => {
     if (!pk) return;
@@ -141,6 +143,22 @@ export default function FormEditor() {
       if (!res.ok) message.error(res.error || 'Ошибка запроса');
     } catch (e: any) {
       setSuggestTest({ ok: false, error: e?.response?.data?.detail || String(e) });
+    }
+  }
+
+  async function runCheckTest() {
+    const vals = fieldForm.getFieldsValue();
+    const cfg = vals.check || {};
+    if (!cfg.connectionId) { message.info('Выберите подключение'); return; }
+    setCheckTest({ loading: true });
+    try {
+      // Test against what the preview currently holds, so {{field}} substitution
+      // is exercised for real rather than against an empty object.
+      const res = await probeCheck({ check: cfg, values: {} });
+      setCheckTest(res);
+      if (!res.ok) message.error(res.error || 'Ошибка запроса');
+    } catch (e: any) {
+      setCheckTest({ ok: false, error: e?.response?.data?.detail || String(e) });
     }
   }
 
@@ -329,6 +347,9 @@ export default function FormEditor() {
             apiDictLoader={getDictOptions}
             suggestLoader={(field, query, values) =>
               probeSuggest({ suggest: field.suggest, query, values }).then((r) => r.items || [])}
+            // The preview runs checks against the UNSAVED config, so an adaptive
+            // form can be walked through end to end before it is ever published.
+            checkRunner={(field, values) => probeCheck({ check: field.check, values })}
             fileUpload={uploadFile}
             showTitle={false}
           />
@@ -626,12 +647,123 @@ export default function FormEditor() {
             </Card>
           )}
 
+          {editType === 'api_check' && (
+            <Card size="small" title="Проверка во внешней системе" style={{ marginBottom: 12 }}>
+              <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+                Пользователь нажимает кнопку — мы отправляем заполненное во внешнюю систему и
+                кладём её ответ в это поле. Дальше на ответ ссылаются условия видимости других
+                полей: <code>{'{id}.путь.в.ответе'}</code>.
+              </Typography.Paragraph>
+              <AntForm.Item name={['check', 'connectionId']} label="Подключение" rules={[{ required: true }]}>
+                <Select
+                  placeholder="Выберите подключение"
+                  options={conns.map((c) => ({ label: `${c.name} — ${c.base_url}`, value: c.id }))}
+                />
+              </AntForm.Item>
+              <Row gutter={12}>
+                <Col span={8}>
+                  <AntForm.Item name={['check', 'method']} label="Метод" initialValue="POST">
+                    <Select options={[{ label: 'POST', value: 'POST' }, { label: 'GET', value: 'GET' }]} />
+                  </AntForm.Item>
+                </Col>
+                <Col span={16}>
+                  <AntForm.Item name={['check', 'endpoint']} label="Endpoint">
+                    <Input placeholder="/decision" />
+                  </AntForm.Item>
+                </Col>
+              </Row>
+              <AntForm.Item
+                name={['check', 'body']}
+                label="Тело запроса (JSON)"
+                tooltip="Подставляются значения полей: {{f_inn}}. Для GET это query-параметры."
+              >
+                <Input.TextArea rows={4} placeholder={'{"inn": "{{f_inn}}", "amount": {{f_amount}}}'} />
+              </AntForm.Item>
+              <AntForm.Item
+                name={['check', 'path']}
+                label="Путь к полезной части ответа"
+                tooltip="Чтобы условия писались как check.decision, а не check.data.result.decision"
+              >
+                <Input placeholder="data" />
+              </AntForm.Item>
+              <Row gutter={12}>
+                <Col span={12}>
+                  <AntForm.Item name={['check', 'buttonLabel']} label="Надпись на кнопке">
+                    <Input placeholder="Проверить" />
+                  </AntForm.Item>
+                </Col>
+                <Col span={12}>
+                  <AntForm.Item
+                    name={['check', 'dependsOn']}
+                    label="Сбросить ответ при изменении"
+                    tooltip="Если пользователь поменяет эти поля, прежний ответ перестанет действовать и поля, которые он открыл, снова спрячутся"
+                  >
+                    <Select
+                      mode="multiple" allowClear placeholder="поля"
+                      options={otherFields
+                        .filter((f) => !LAYOUT_TYPES.includes(f.type) && f.type !== 'api_check')
+                        .map((f) => ({ label: `${f.label} (${f.id})`, value: f.id }))}
+                    />
+                  </AntForm.Item>
+                </Col>
+              </Row>
+              <AntForm.Item name={['check', 'hintBefore']} label="Пояснение над кнопкой">
+                <Input placeholder="Проверим лимит по вашему ИНН" />
+              </AntForm.Item>
+              <Space>
+                <Button onClick={runCheckTest}>Тест</Button>
+                {checkTest?.loading && <Typography.Text type="secondary">запрос…</Typography.Text>}
+              </Space>
+              {checkTest && !checkTest.loading && (
+                <Alert
+                  style={{ marginTop: 8 }}
+                  type={checkTest.ok ? 'success' : 'error'}
+                  message={checkTest.ok ? 'Ответ получен' : (checkTest.error || 'Ошибка')}
+                  description={checkTest.ok
+                    ? (
+                      <>
+                        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                          Так к нему обращаться в условиях:
+                        </Typography.Text>
+                        <pre style={{ fontSize: 11, maxHeight: 160, overflow: 'auto', margin: '4px 0 0' }}>
+                          {JSON.stringify(checkTest.data, null, 2)}
+                        </pre>
+                      </>
+                    )
+                    : undefined}
+                />
+              )}
+            </Card>
+          )}
+
           {!LAYOUT_TYPES.includes(editType) && (
             <>
-              <Typography.Text strong>Условие видимости (visibleIf)</Typography.Text>
+              <AntForm.Item
+                name="inSection"
+                label="Внутри секции"
+                tooltip="Поле будет показано, только если показана эта секция — одно условие на весь блок"
+              >
+                <Select
+                  allowClear placeholder="—"
+                  options={otherFields
+                    .filter((f) => f.type === 'section_header')
+                    .map((f) => ({ label: f.label || f.id, value: f.id }))}
+                />
+              </AntForm.Item>
+              <Typography.Text strong>Условие видимости</Typography.Text>
               <ConditionEditor prefix="visibleIf" fields={otherFields} form={fieldForm} />
-              <Typography.Text strong>Условие обязательности (requiredIf)</Typography.Text>
+              <Typography.Text strong>Условие обязательности</Typography.Text>
               <ConditionEditor prefix="requiredIf" fields={otherFields} form={fieldForm} />
+            </>
+          )}
+
+          {editType === 'section_header' && (
+            <>
+              <Typography.Text strong>Условие видимости секции</Typography.Text>
+              <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 4 }}>
+                Скроет заголовок и все поля, у которых в «Внутри секции» выбрана эта секция.
+              </Typography.Paragraph>
+              <ConditionEditor prefix="visibleIf" fields={otherFields} form={fieldForm} />
             </>
           )}
         </AntForm>
@@ -673,11 +805,13 @@ function FieldRow({ field, highlight, onEdit, onDelete, onBadgeClick, onCopyId }
   const f: Field = field;
   const isLayout = LAYOUT_TYPES.includes(f.type);
   const badges: React.ReactNode[] = [];
-  if (f.visibleIf?.fieldId && f.requiredIf?.fieldId)
-    badges.push(<Tag key="both" color="purple" style={{ cursor: 'pointer' }} onClick={() => onBadgeClick(f.visibleIf!.fieldId)}>vis+req</Tag>);
+  const visLeaf = firstLeaf(f.visibleIf);
+  const reqLeaf = firstLeaf(f.requiredIf);
+  if (visLeaf && reqLeaf)
+    badges.push(<Tag key="both" color="purple" style={{ cursor: 'pointer' }} onClick={() => onBadgeClick(visLeaf.fieldId)}>vis+req</Tag>);
   else {
-    if (f.visibleIf?.fieldId) badges.push(<Tag key="v" color="gold" style={{ cursor: 'pointer' }} onClick={() => onBadgeClick(f.visibleIf!.fieldId)}>видимость</Tag>);
-    if (f.requiredIf?.fieldId) badges.push(<Tag key="r" color="magenta" style={{ cursor: 'pointer' }} onClick={() => onBadgeClick(f.requiredIf!.fieldId)}>обязат.</Tag>);
+    if (visLeaf) badges.push(<Tag key="v" color="gold" style={{ cursor: 'pointer' }} onClick={() => onBadgeClick(visLeaf.fieldId)}>видимость</Tag>);
+    if (reqLeaf) badges.push(<Tag key="r" color="magenta" style={{ cursor: 'pointer' }} onClick={() => onBadgeClick(reqLeaf.fieldId)}>обязат.</Tag>);
   }
   if (f.type === 'calculated' && f.formula) {
     const refs = extractRefs(f.formula);
@@ -711,30 +845,107 @@ function FieldRow({ field, highlight, onEdit, onDelete, onBadgeClick, onCopyId }
   );
 }
 
+/** One editable level of an all/any group. Deeper nesting is not authorable
+ *  here — the engine understands it, but only imported schemas could contain it. */
 function ConditionEditor({ prefix, fields, form }: { prefix: string; fields: Field[]; form: any }) {
-  const fid = AntForm.useWatch([prefix, 'fieldId'], form);
-  const op = AntForm.useWatch([prefix, 'operator'], form);
+  const mode = AntForm.useWatch([prefix, 'mode'], form) || 'all';
+  const list = AntForm.useWatch([prefix, 'list'], form) || [];
+
+  // A condition may point at a plain field OR at a path inside a check's answer
+  // (credit_check.decision), so the control accepts free text as well as picks.
+  const options = fields
+    .filter((f) => !['divider', 'info_text'].includes(f.type))
+    .flatMap((f) => (
+      f.type === 'api_check'
+        ? [{ value: `${f.id}.`, label: `${f.label} → ответ проверки (${f.id}.…)` }]
+        : [{ value: f.id, label: `${f.label} (${f.id})` }]
+    ));
+
   return (
-    <Row gutter={8} style={{ marginBottom: 8 }}>
-      <Col span={9}>
-        <AntForm.Item name={[prefix, 'fieldId']} noStyle>
-          <Select allowClear showSearch optionFilterProp="label" placeholder="поле"
-            options={fields.filter((f) => !['section_header', 'divider', 'info_text'].includes(f.type)).map((f) => ({ label: `${f.label} (${f.id})`, value: f.id }))}
-            style={{ width: '100%' }} />
+    <div style={{ marginBottom: 12 }}>
+      {list.length > 1 && (
+        <AntForm.Item name={[prefix, 'mode']} initialValue="all" noStyle>
+          <Segmented
+            size="small"
+            style={{ marginBottom: 8 }}
+            options={[{ label: 'Все условия', value: 'all' }, { label: 'Любое из', value: 'any' }]}
+          />
         </AntForm.Item>
-      </Col>
-      <Col span={7}>
-        <AntForm.Item name={[prefix, 'operator']} noStyle>
-          <Select placeholder="оператор" options={OPERATORS} disabled={!fid} style={{ width: '100%' }} />
-        </AntForm.Item>
-      </Col>
-      <Col span={8}>
-        <AntForm.Item name={[prefix, 'value']} noStyle>
-          <Input placeholder="значение" disabled={!fid || ['empty', 'not_empty'].includes(op)} />
-        </AntForm.Item>
-      </Col>
-    </Row>
+      )}
+      <AntForm.List name={[prefix, 'list']}>
+        {(items, { add, remove }) => (
+          <>
+            {items.map(({ key, name, ...rest }) => (
+              <Row key={key} gutter={6} style={{ marginBottom: 6 }}>
+                <Col span={9}>
+                  <AntForm.Item {...rest} name={[name, 'fieldId']} noStyle>
+                    <AutoComplete
+                      options={options}
+                      placeholder="поле или путь"
+                      filterOption={(input, opt) => String(opt?.value ?? '').toLowerCase().includes(input.toLowerCase())
+                        || String(opt?.label ?? '').toLowerCase().includes(input.toLowerCase())}
+                      style={{ width: '100%' }}
+                    />
+                  </AntForm.Item>
+                </Col>
+                <Col span={6}>
+                  <AntForm.Item {...rest} name={[name, 'operator']} noStyle>
+                    <Select placeholder="оператор" options={OPERATORS} style={{ width: '100%' }} />
+                  </AntForm.Item>
+                </Col>
+                <Col span={7}>
+                  <AntForm.Item {...rest} name={[name, 'value']} noStyle>
+                    <Input
+                      placeholder="значение"
+                      disabled={['empty', 'not_empty'].includes(list[name]?.operator)}
+                    />
+                  </AntForm.Item>
+                </Col>
+                <Col span={2}>
+                  <Button size="small" icon={<DeleteOutlined />} onClick={() => remove(name)} />
+                </Col>
+              </Row>
+            ))}
+            <Button size="small" icon={<PlusOutlined />} onClick={() => add({ operator: 'eq' })}>
+              условие
+            </Button>
+          </>
+        )}
+      </AntForm.List>
+    </div>
   );
+}
+
+/** ConditionNode → the flat {mode, list} shape the editor manipulates. */
+function conditionToForm(node?: ConditionNode): { mode: 'all' | 'any'; list: Condition[] } {
+  if (!node) return { mode: 'all', list: [] };
+  if ('all' in node) return { mode: 'all', list: leaves(node.all) };
+  if ('any' in node) return { mode: 'any', list: leaves(node.any) };
+  if ('not' in node) return { mode: 'all', list: leaves([node.not]) };
+  return { mode: 'all', list: [node] };
+}
+
+function leaves(nodes: ConditionNode[]): Condition[] {
+  return (nodes || []).flatMap((n) => {
+    if (!n) return [];
+    if ('all' in n) return leaves(n.all);
+    if ('any' in n) return leaves(n.any);
+    if ('not' in n) return leaves([n.not]);
+    return [n];
+  });
+}
+
+/** …and back. A single condition stays a bare leaf, so forms built before groups
+ *  existed round-trip byte-identical. */
+function formToCondition(v: any): ConditionNode | undefined {
+  const list: Condition[] = (v?.list || []).filter((c: Condition) => c && c.fieldId);
+  if (!list.length) return undefined;
+  if (list.length === 1) return list[0];
+  return v?.mode === 'any' ? { any: list } : { all: list };
+}
+
+function firstLeaf(node?: ConditionNode): Condition | undefined {
+  return node ? leaves([node])[0] : undefined;
 }
 
 function FieldChips({ fields, dicts, onInsert }: { fields: Field[]; dicts: Dictionary[]; onInsert: (t: string) => void }) {
@@ -779,8 +990,8 @@ function fieldToForm(f: Field): any {
     ...f,
     gridSpan: f.gridSpan || 1,
     dictDisplay: f.dictDisplay || 'select',
-    visibleIf: f.visibleIf || {},
-    requiredIf: f.requiredIf || {},
+    visibleIf: conditionToForm(f.visibleIf),
+    requiredIf: conditionToForm(f.requiredIf),
     validation: f.validation || {},
     options: f.options || [],
     calcDecimals: f.calcDecimals ?? 2,
@@ -788,6 +999,7 @@ function fieldToForm(f: Field): any {
     // previously-edited field's suggest/sameAs settings (resetFields alone can't
     // clear inputs that aren't mounted yet).
     suggest: f.suggest || {},
+    check: f.check || {},
     sameAs: f.sameAs || {},
     mask: f.mask || {},
   };
@@ -806,11 +1018,15 @@ function formToField(vals: any, prev: Field): Field {
   if (DICT_TYPES.includes(out.type)) {
     out.dictDisplay = out.type === 'dict_radio' ? 'radio' : out.type === 'dict_checkbox' ? 'checkbox' : 'select';
   }
-  if (!vals.visibleIf?.fieldId) delete out.visibleIf;
-  if (!vals.requiredIf?.fieldId) delete out.requiredIf;
+  const vis = formToCondition(vals.visibleIf);
+  const req = formToCondition(vals.requiredIf);
+  if (vis) out.visibleIf = vis; else delete out.visibleIf;
+  if (req) out.requiredIf = req; else delete out.requiredIf;
+  if (!out.inSection) delete out.inSection;
   if (vals.validation && Object.values(vals.validation).every((x) => x === undefined || x === null)) delete out.validation;
   // Keep nested config only on the field type that uses it.
   if (out.type !== 'suggest') delete out.suggest;
+  if (out.type !== 'api_check') delete out.check;
   if (out.type !== 'same_as') delete out.sameAs;
   return out;
 }
