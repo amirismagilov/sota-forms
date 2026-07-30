@@ -94,6 +94,15 @@ async def run() -> None:
                 raise
             await asyncio.sleep(1)
     print("[worker] execute-worker started, polling webhook outbox", flush=True)
+    # The Operaton catalogue poller shares this process: it is a second timer, not
+    # a second service, so nothing has to be added to docker-compose. It returns
+    # immediately when auto-sync is off.
+    from .operaton_poller import run as run_operaton_sync
+
+    await asyncio.gather(_deliver_loop(), run_operaton_sync())
+
+
+async def _deliver_loop() -> None:
     while True:
         try:
             n = await process_batch()
