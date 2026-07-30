@@ -100,6 +100,7 @@ docker compose up --build
 | `SOTA_BPMN_TOKEN` | Общий секрет, уходит в `X-Forms-Token`; должен совпадать с `FORMS_WEBHOOK_TOKEN` в sota-bpmn |
 
 Как этим пользоваться — [`docs/operaton-howto.md`](docs/operaton-howto.md).
+Как это работает и как проверить — [`docs/operaton-check.md`](docs/operaton-check.md).
 Правила конвертации и техническая спецификация — [`docs/operaton-import-spec.md`](docs/operaton-import-spec.md).
 
 ### Доставка данных (execute-worker + доска)
