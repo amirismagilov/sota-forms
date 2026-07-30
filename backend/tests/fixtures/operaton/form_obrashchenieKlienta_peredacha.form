@@ -1,0 +1,34 @@
+{
+  "type": "default",
+  "id": "form_obrashchenieKlienta_peredacha",
+  "components": [
+    {
+      "type": "select",
+      "id": "Field_peredacha_result",
+      "key": "peredacha_result",
+      "label": "Решение",
+      "validate": {
+        "required": true
+      },
+      "values": [
+        {
+          "label": "Завершение процесса. Передано в профильный процесс",
+          "value": "zavershenie_protsessa_pe"
+        }
+      ]
+    },
+    {
+      "type": "textarea",
+      "id": "Field_peredacha_comment",
+      "key": "peredacha_comment",
+      "label": "Комментарий"
+    }
+  ],
+  "executionPlatform": "Camunda Platform",
+  "executionPlatformVersion": "7.21.0",
+  "exporter": {
+    "name": "sota-bpmn",
+    "version": "1.0"
+  },
+  "schemaVersion": 16
+}

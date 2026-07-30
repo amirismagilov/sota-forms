@@ -1,0 +1,42 @@
+{
+  "type": "default",
+  "id": "form_obrashchenieKlienta_obrabotka",
+  "components": [
+    {
+      "type": "select",
+      "id": "Field_obrabotka_result",
+      "key": "obrabotka_result",
+      "label": "Решение",
+      "validate": {
+        "required": true
+      },
+      "values": [
+        {
+          "label": "Нужны данные от клиента",
+          "value": "client_data_needed"
+        },
+        {
+          "label": "Проект ответа готов",
+          "value": "draft_response_ready"
+        },
+        {
+          "label": "Нужно профильное подразделение",
+          "value": "specialist_unit_needed"
+        }
+      ]
+    },
+    {
+      "type": "textarea",
+      "id": "Field_obrabotka_comment",
+      "key": "obrabotka_comment",
+      "label": "Комментарий"
+    }
+  ],
+  "executionPlatform": "Camunda Platform",
+  "executionPlatformVersion": "7.21.0",
+  "exporter": {
+    "name": "sota-bpmn",
+    "version": "1.0"
+  },
+  "schemaVersion": 16
+}
