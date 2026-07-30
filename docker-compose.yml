@@ -46,6 +46,11 @@ services:
       REDIS_URL: redis://redis:6379/0
       SOTA_BPMN_BASE: ${SOTA_BPMN_BASE:-}
       SOTA_BPMN_TOKEN: ${SOTA_BPMN_TOKEN:-}
+      # Auto-pull newly deployed process forms into the registry.
+      OPERATON_AUTO_SYNC: ${OPERATON_AUTO_SYNC:-false}
+      OPERATON_SYNC_INTERVAL: ${OPERATON_SYNC_INTERVAL:-300}
+      OPERATON_SYNC_ACCOUNT: ${OPERATON_SYNC_ACCOUNT:-}
+      OPERATON_SYNC_PUBLISH: ${OPERATON_SYNC_PUBLISH:-false}
     depends_on:
       db:
         condition: service_healthy

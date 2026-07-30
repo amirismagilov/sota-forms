@@ -7,6 +7,7 @@ asserts on how an unreachable engine is reported.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -363,3 +364,75 @@ async def test_sync_reports_an_empty_catalogue_instead_of_failing(client, monkey
     body = (await client.post("/api/operaton/sync", json={"process_key": "nope"})).json()
     assert body["imported"] == 0
     assert "нет форм" in body["message"]
+
+
+# ------------------------------------------------------------- auto-sync loop
+
+
+async def test_auto_sync_pass_imports_into_the_configured_account(client, catalogue, monkeypatch):
+    """One pass of the background poller does exactly what the button does."""
+    from app.config import get_settings
+    from app.worker import operaton_poller
+
+    monkeypatch.setenv("OPERATON_SYNC_ACCOUNT", "acc_demo")
+    get_settings.cache_clear()
+    try:
+        res = await operaton_poller.run_once()
+        assert res["imported"] == 2
+
+        listed = (await client.get("/api/forms", params={"source": "operaton"})).json()
+        assert listed["total"] == 2
+        # Traceable as machine-made, and still a draft — a timer reviews nothing.
+        full = (await client.get(f"/api/forms/{listed['items'][0]['id']}")).json()
+        assert full["source_meta"]["imported_by"] == "auto-sync"
+        assert full["status"] == "draft"
+    finally:
+        get_settings.cache_clear()
+
+
+async def test_auto_sync_pass_is_idempotent(client, catalogue, monkeypatch):
+    """Repeated passes must not pile up duplicates — this runs every N seconds."""
+    from app.config import get_settings
+    from app.worker import operaton_poller
+
+    monkeypatch.setenv("OPERATON_SYNC_ACCOUNT", "acc_demo")
+    get_settings.cache_clear()
+    try:
+        first = await operaton_poller.run_once()
+        second = await operaton_poller.run_once()
+        third = await operaton_poller.run_once()
+
+        assert first["imported"] == 2
+        assert second["imported"] == 0 and second["skipped"] == 2
+        assert third["imported"] == 0
+        assert (await client.get("/api/forms", params={"source": "operaton"})).json()["total"] == 2
+    finally:
+        get_settings.cache_clear()
+
+
+async def test_auto_sync_does_not_start_without_a_configured_bpmn(monkeypatch):
+    """Auto-sync on but no sota-bpmn configured → refuse to start, do not spin."""
+    from app.config import get_settings
+    from app.worker import operaton_poller
+
+    monkeypatch.setenv("OPERATON_AUTO_SYNC", "true")
+    monkeypatch.setenv("SOTA_BPMN_BASE", "")
+    get_settings.cache_clear()
+    try:
+        # Returns immediately instead of looping forever.
+        await asyncio.wait_for(operaton_poller.run(), timeout=5)
+    finally:
+        get_settings.cache_clear()
+
+
+async def test_auto_sync_is_off_by_default(monkeypatch):
+    from app.config import get_settings
+    from app.worker import operaton_poller
+
+    monkeypatch.delenv("OPERATON_AUTO_SYNC", raising=False)
+    get_settings.cache_clear()
+    try:
+        assert get_settings().operaton_auto_sync is False
+        await asyncio.wait_for(operaton_poller.run(), timeout=5)
+    finally:
+        get_settings.cache_clear()

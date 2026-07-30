@@ -98,6 +98,10 @@ docker compose up --build
 |---|---|
 | `SOTA_BPMN_BASE` | URL sota-bpmn. Пусто — интеграция выключена, импорт из файла работает |
 | `SOTA_BPMN_TOKEN` | Общий секрет, уходит в `X-Forms-Token`; должен совпадать с `FORMS_WEBHOOK_TOKEN` в sota-bpmn |
+| `OPERATON_AUTO_SYNC` | `true` — фоновый воркер сам подтягивает формы новых процессов (по умолчанию `false`) |
+| `OPERATON_SYNC_INTERVAL` | Период опроса каталога, секунд (по умолчанию 300, минимум 30) |
+| `OPERATON_SYNC_ACCOUNT` | Аккаунт-получатель; пусто — `default_account_id` |
+| `OPERATON_SYNC_PUBLISH` | `true` — публиковать подтянутые формы сразу (по умолчанию черновики) |
 
 Как этим пользоваться — [`docs/operaton-howto.md`](docs/operaton-howto.md).
 Как это работает и как проверить — [`docs/operaton-check.md`](docs/operaton-check.md).
