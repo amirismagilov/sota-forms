@@ -44,7 +44,7 @@ class NoCodeForm extends HTMLElement {
   private values: Record<string, any> = {};
 
   static get observedAttributes() {
-    return ['form-id', 'primary-color', 'border-radius', 'api-base'];
+    return ['form-id', 'primary-color', 'border-radius', 'api-base', 'task-id', 'context'];
   }
 
   constructor() {
@@ -62,6 +62,19 @@ class NoCodeForm extends HTMLElement {
 
   private apiBase() {
     return this.getAttribute('api-base') || DEFAULT_API_BASE;
+  }
+
+  /** Runtime context for the submission — e.g. the Operaton task being completed.
+   *  `task-id` is the common case; `context` takes arbitrary JSON for the rest. */
+  private context(): Record<string, any> {
+    const ctx: Record<string, any> = {};
+    const raw = this.getAttribute('context');
+    if (raw) {
+      try { Object.assign(ctx, JSON.parse(raw)); } catch { /* ignore malformed */ }
+    }
+    const taskId = this.getAttribute('task-id');
+    if (taskId) ctx.taskId = taskId;
+    return ctx;
   }
 
   private async render() {
@@ -97,8 +110,19 @@ class NoCodeForm extends HTMLElement {
     if (br) token.borderRadius = Number(br);
 
     const onSubmit = async (payload: Record<string, any>) => {
-      this.emit('form:submit', { data: payload, webhookUrl: data.submit?.webhookUrl });
-      return (await axios.post(`${api}/public/forms/${formId}/submit`, { data: payload })).data;
+      const context = this.context();
+      this.emit('form:submit', { data: payload, context, webhookUrl: data.submit?.webhookUrl });
+      try {
+        const res = (await axios.post(`${api}/public/forms/${formId}/submit`, { data: payload, context })).data;
+        this.emit('form:completed', { data: payload, context, submissionId: res.submissionId });
+        return res;
+      } catch (e: any) {
+        // Synchronous delivery (Operaton task completion) reports engine
+        // failures here — surface them instead of showing a success message.
+        const detail = e?.response?.data?.detail || 'Не удалось отправить форму';
+        this.emit('form:error', { error: 'submit_failed', detail, context });
+        throw new Error(detail);
+      }
     };
     const onChange = (field: string, value: any, all: Record<string, any>) => {
       this.values = all;

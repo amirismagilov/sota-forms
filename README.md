@@ -63,13 +63,43 @@ docker compose up --build
 - Схема + токены + справочники грузятся по `form-id`; API-справочники и загрузка
   файлов идут через backend-proxy.
 - **JS API**: `getValues/setValues/validate/reset/submit/destroy`.
-- **События**: `form:ready`, `form:change`, `form:submit`, `form:error`.
+- **События**: `form:ready`, `form:change`, `form:submit`, `form:completed`, `form:error`.
 - Атрибуты-оверрайды: `primary-color`, `border-radius`, `api-base`.
+- **Рантайм-контекст**: `task-id` (задача Оператона) и произвольный `context` (JSON) —
+  уходят в submit и подставляются в шаблон webhook-URL.
 
 ```html
 <script src="https://forms.acme.com/form-widget.js"></script>
 <no-code-form form-id="order_form"></no-code-form>
+
+<!-- Форма пользовательской задачи Оператона -->
+<no-code-form form-id="form_obrashchenie_klienta_klassifikaciya"
+              task-id="a1b2c3d4-..."></no-code-form>
 ```
+
+### Формы из Оператона (интеграция с sota-bpmn)
+- Отдельный раздел **«Из Оператона»** в реестре форм: переключатель источника
+  (Все / Свои / Из Оператона), метка источника с ключом формы и процессом.
+- **Импорт** двумя путями: из каталога **sota-bpmn** по API (процесс → форма) или
+  загрузкой файла `.form` (схема form-js / Camunda Forms JSON).
+- Конвертация с **честным отчётом**: что перенесено, что требует внимания, что не
+  поддержано — ни одно поле не теряется молча. Отчёт виден и при импорте, и позже
+  в редакторе.
+- Импортированная форма — **обычный черновик**: редактируется тем же конструктором,
+  версионируется, публикуется, встраивается по `form-id`.
+- **Возврат данных в процесс**: submit уходит в `POST {sota-bpmn}/api/tasks/{taskId}/complete`
+  синхронно, поэтому «задача уже завершена» (409) виден пользователю сразу, а не
+  теряется в фоновых ретраях.
+- ID полей, пришедших из Оператона, — это **переменные процесса**: их нельзя
+  переименовать или удалить (иначе развилки падают в рантайме), защита стоит и в UI,
+  и на бэкенде.
+
+| Переменная | Назначение |
+|---|---|
+| `SOTA_BPMN_BASE` | URL sota-bpmn. Пусто — интеграция выключена, импорт из файла работает |
+| `SOTA_BPMN_TOKEN` | Общий секрет, уходит в `X-Forms-Token`; должен совпадать с `FORMS_WEBHOOK_TOKEN` в sota-bpmn |
+
+Подробности и правила конвертации — [`docs/operaton-import-spec.md`](docs/operaton-import-spec.md).
 
 ### Доставка данных (execute-worker + доска)
 - Submit пишет заполнение в БД и кладёт задачу в **outbox**.

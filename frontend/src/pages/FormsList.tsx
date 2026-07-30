@@ -1,11 +1,12 @@
-import { DownloadOutlined, PlusOutlined, SearchOutlined, UploadOutlined } from '@ant-design/icons';
+import { ApiOutlined, DownloadOutlined, PlusOutlined, SearchOutlined, UploadOutlined } from '@ant-design/icons';
 import {
-  App, Badge, Button, Card, Form as AntForm, Input, Modal, Segmented, Space, Table, Tag, Tooltip, Upload,
+  App, Badge, Button, Card, Empty, Form as AntForm, Input, Modal, Segmented, Space, Table, Tag, Tooltip, Upload,
 } from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createForm, deleteForm, exportForm, importForm, listForms, publishForm, setFormStatus } from '../api';
-import type { FormSchema } from '../types';
+import type { FormSchema, FormSource } from '../types';
+import OperatonImportModal from './OperatonImportModal';
 
 const STATUS_META: Record<string, { color: string; label: string }> = {
   draft: { color: 'default', label: 'Черновик' },
@@ -20,8 +21,10 @@ export default function FormsList() {
   const [total, setTotal] = useState(0);
   const [q, setQ] = useState('');
   const [status, setStatus] = useState<string>('all');
+  const [source, setSource] = useState<'all' | FormSource>('all');
   const [page, setPage] = useState(1);
   const [open, setOpen] = useState(false);
+  const [operatonOpen, setOperatonOpen] = useState(false);
   const [form] = AntForm.useForm();
   const pageSize = 10;
 
@@ -29,10 +32,11 @@ export default function FormsList() {
     listForms({
       q: q || undefined,
       status: status === 'all' ? undefined : status,
+      source: source === 'all' ? undefined : source,
       limit: pageSize,
       offset: (page - 1) * pageSize,
     }).then((r) => { setRows(r.items); setTotal(r.total); }).catch(() => setRows([]));
-  }, [q, status, page]);
+  }, [q, status, source, page]);
   useEffect(() => { load(); }, [load]);
 
   async function onCreate() {
@@ -90,6 +94,29 @@ export default function FormsList() {
       ),
     },
     {
+      title: 'Источник', width: 150,
+      render: (_: any, r: FormSchema) => {
+        if (r.source !== 'operaton') return <Tag>Своя</Tag>;
+        const m = r.source_meta || {};
+        return (
+          <Tooltip
+            title={
+              <>
+                Форма Оператона: <code>{m.operaton_form_id}</code>
+                {m.process_key ? <><br />Процесс: <code>{m.process_key}</code></> : null}
+                {m.imported_at ? <><br />Импорт: {new Date(m.imported_at).toLocaleString('ru-RU')}</> : null}
+              </>
+            }
+          >
+            <Space direction="vertical" size={2}>
+              <Tag color="purple">Из Оператона</Tag>
+              {m.warning_count ? <Tag color="orange" style={{ fontSize: 11 }}>{m.warning_count} замечаний</Tag> : null}
+            </Space>
+          </Tooltip>
+        );
+      },
+    },
+    {
       title: 'Версия', width: 90,
       render: (_: any, r: FormSchema) => r.published_version ? <Tag>v{r.published_version}</Tag> : '—',
     },
@@ -122,9 +149,10 @@ export default function FormsList() {
 
   return (
     <Card
-      title="Реестр форм"
+      title={source === 'operaton' ? 'Реестр форм — из Оператона' : 'Реестр форм'}
       extra={
         <Space>
+          <Button icon={<ApiOutlined />} onClick={() => setOperatonOpen(true)}>Импорт из Оператона</Button>
           <Upload accept=".json" showUploadList={false} beforeUpload={doImport}>
             <Button icon={<UploadOutlined />}>Импорт JSON</Button>
           </Upload>
@@ -148,12 +176,38 @@ export default function FormsList() {
             { label: 'Архив', value: 'archived' },
           ]}
         />
+        <Segmented
+          value={source}
+          onChange={(v) => { setSource(v as 'all' | FormSource); setPage(1); }}
+          options={[
+            { label: 'Все источники', value: 'all' },
+            { label: 'Свои', value: 'local' },
+            { label: 'Из Оператона', value: 'operaton' },
+          ]}
+        />
       </Space>
       <Table
         rowKey="id"
         dataSource={rows}
         columns={columns as any}
+        locale={{
+          emptyText: source === 'operaton'
+            ? (
+              <Empty description="Форм из Оператона пока нет">
+                <Button type="primary" icon={<ApiOutlined />} onClick={() => setOperatonOpen(true)}>
+                  Импортировать форму
+                </Button>
+              </Empty>
+            )
+            : undefined,
+        }}
         pagination={{ current: page, pageSize, total, onChange: setPage, showTotal: (t) => `Всего: ${t}` }}
+      />
+
+      <OperatonImportModal
+        open={operatonOpen}
+        onClose={() => setOperatonOpen(false)}
+        onImported={(pk) => { setOperatonOpen(false); nav(`/forms/${pk}`); }}
       />
 
       <Modal title="Новая форма" open={open} onOk={onCreate} onCancel={() => setOpen(false)} okText="Создать">

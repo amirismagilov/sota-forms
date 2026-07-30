@@ -1,5 +1,8 @@
 import axios from 'axios';
-import type { Connection, Dictionary, FormListResult, FormSchema, FormVersionInfo, PublicForm } from './types';
+import type {
+  Connection, Dictionary, FormListResult, FormSchema, FormSource, FormVersionInfo,
+  OperatonFormSummary, OperatonPreview, OperatonProcess, PublicForm,
+} from './types';
 
 const api = axios.create({ baseURL: '/api' });
 
@@ -36,7 +39,7 @@ export const register = (email: string, password: string, account_name?: string)
 export const me = () => api.get<AuthUser>('/auth/me').then((r) => r.data);
 
 // ---- Forms (registry) ----
-export interface FormQuery { q?: string; status?: string; limit?: number; offset?: number; sort?: string }
+export interface FormQuery { q?: string; status?: string; source?: FormSource; limit?: number; offset?: number; sort?: string }
 export const listForms = (params: FormQuery = {}) =>
   api.get<FormListResult>('/forms', { params }).then((r) => r.data);
 export const getForm = (pk: string) => api.get<FormSchema>(`/forms/${pk}`).then((r) => r.data);
@@ -123,5 +126,28 @@ export const uploadFile = (file: File) => {
   return api.post('/public/files', fd).then((r) => r.data as { id: string; url: string; filename: string; size: number });
 };
 export const importForm = (body: any) => api.post('/forms/import', body).then((r) => r.data);
+
+// ---- Operaton (sota-bpmn) ----
+export interface OperatonStatus {
+  ok: boolean; configured: boolean; base_url?: string; status?: number; message: string;
+}
+export interface OperatonImportBody {
+  schema?: any;              // uploaded .form file
+  operaton_form_id?: string; // or pulled from the sota-bpmn catalogue
+  process_key?: string;
+  form_id?: string;
+  title?: string;
+}
+export const operatonStatus = () =>
+  api.get<OperatonStatus>('/operaton/status').then((r) => r.data);
+export const operatonProcesses = () =>
+  api.get<{ items: OperatonProcess[] }>('/operaton/processes').then((r) => r.data.items);
+export const operatonForms = (process?: string) =>
+  api.get<{ items: OperatonFormSummary[] }>('/operaton/forms', { params: process ? { process } : {} })
+    .then((r) => r.data.items);
+export const operatonPreview = (body: OperatonImportBody) =>
+  api.post<OperatonPreview>('/operaton/preview', body).then((r) => r.data);
+export const operatonImport = (body: OperatonImportBody) =>
+  api.post<FormSchema>('/operaton/import', body).then((r) => r.data);
 
 export default api;

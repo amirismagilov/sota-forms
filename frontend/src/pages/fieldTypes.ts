@@ -24,6 +24,7 @@ export const FIELD_TYPE_GROUPS: { label: string; options: { label: string; value
       { label: 'Подсказка / автокомплит (API)', value: 'suggest' },
       { label: 'Статический список', value: 'select_static' },
       { label: 'Радио-группа', value: 'radio_group' },
+      { label: 'Чекбоксы (мультивыбор)', value: 'checkbox_group' },
       { label: 'Чекбокс (согласие)', value: 'checkbox' },
       { label: 'Совпадает с… (скрыть+автозаполнить)', value: 'same_as' },
       { label: 'Переключатель', value: 'toggle' },

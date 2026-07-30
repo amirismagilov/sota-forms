@@ -554,6 +554,11 @@ const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
         return wrap(f, <Select style={{ width: '100%' }} value={v} placeholder={f.placeholder || ''} options={(f.options || []).map((o) => ({ label: o.label, value: o.value }))} onChange={(x) => setValue(f, x)} allowClear />);
       case 'radio_group':
         return wrap(f, <Radio.Group value={v} onChange={(e) => setValue(f, e.target.value)}>{(f.options || []).map((o) => <Radio key={o.value} value={o.value}>{o.label}</Radio>)}</Radio.Group>);
+      // Multi-select over static options (Operaton checklist/taglist). The
+      // dictionary-backed variant is dict_checkbox; this one carries its values
+      // inline, so nothing has to be materialised into the dictionaries section.
+      case 'checkbox_group':
+        return wrap(f, <Checkbox.Group value={Array.isArray(v) ? v : []} options={(f.options || []).map((o) => ({ label: o.label, value: o.value }))} onChange={(x) => setValue(f, x)} />, false);
       case 'checkbox':
         return (
           <div>

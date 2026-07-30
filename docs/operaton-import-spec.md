@@ -1,8 +1,13 @@
 # Спецификация: раздел «Из Оператона» и импорт форм Operaton
 
-Статус: черновик на согласование
-Ветка реализации: `claude/operator-forms-section-6ckxvw`
+Статус: **реализовано** (Фазы 1 и 3), см. §16 «Что фактически сделано»
+Ветки: `sota-forms` → `claude/operator-forms-section-6ckxvw`,
+`sota-bpmn` → `claude/sota-forms-integration`
 Дата: 2026-07-30
+
+> Разделы §1–§15 — исходная спецификация. Реализация отличается в двух местах,
+> оба описаны в §16: импорт идёт **и по API sota-bpmn**, а не только из файла, и
+> возврат данных в процесс (изначально Фаза 3) вошёл в первый релиз.
 
 ---
 
@@ -551,3 +556,103 @@ API (`backend/tests/test_api.py`, тир с реальной БД):
    процесса и завершить задачу. В Фазе 1 форма после отправки уходит в наш webhook,
    а не в `/task/{id}/complete` Оператона. Нужно решить, достаточно ли webhook-а
    на первом этапе или Фаза 3 требуется сразу.
+
+---
+
+## 16. Что фактически сделано
+
+Реализовано в двух репозиториях. Ключевое отличие от исходного плана: импорт
+работает **и по API sota-bpmn**, а не только файлом, и возврат данных в процесс
+(Фаза 3) вошёл в первый релиз — без него импортированные формы задач бесполезны
+в проде.
+
+### 16.1 sota-forms
+
+| Файл | Что |
+|---|---|
+| `backend/app/operaton.py` | Конвертер form-js → наша схема, парсер FEEL-условий, шаблоны webhook-URL. Чистый, без БД и сети |
+| `backend/app/bpmn_client.py` | Клиент к BFF sota-bpmn (`/api/processes`, `/api/forms`, `/api/forms/{id}`) + инъекция общего секрета |
+| `backend/app/routers/operaton.py` | `GET /api/operaton/{status,processes,forms}`, `POST /api/operaton/{preview,import}` |
+| `backend/app/models.py`, `db.py` | `Form.source/source_meta/source_schema` + идемпотентная миграция `ALTER TABLE … IF NOT EXISTS` |
+| `backend/app/routers/forms.py` | Фильтр `?source=`, урезанный паспорт в списке, **запрет ломать переменные процесса** при `PUT` |
+| `backend/app/routers/public.py` | Подстановка `{{taskId}}`/`{{bpmnBase}}`, синхронная доставка, перевод ошибок движка на человеческий, `GET /api/public/forms/by-operaton/{id}` |
+| `frontend/src/pages/OperatonImportModal.tsx` | Импорт: каталог sota-bpmn или файл, dry-run предпросмотр, отчёт, живой рендер формы |
+| `frontend/src/pages/FormsList.tsx` | Переключатель источника, колонка «Источник», пустое состояние раздела |
+| `frontend/src/pages/FormEditor.tsx` | Метка «Из Оператона», список непереносов, блокировка ID связанных полей |
+| `frontend/src/widget/webcomponent.tsx` | Атрибуты `task-id` / `context`, событие `form:completed`, проброс ошибок движка |
+| `frontend/src/renderer/FormRenderer.tsx` | Новый тип `checkbox_group` (§5.1) |
+
+### 16.2 sota-bpmn
+
+| Файл | Что |
+|---|---|
+| `backend/sota_forms_client.py` | Резолв «есть ли у этой формы Оператона опубликованный аналог в sota-forms» |
+| `backend/routes/forms_bff.py` | `GET /api/tasks/{id}/external-form`; защита `POST /complete` общим секретом |
+| `backend/operaton_client.py` | `get_task_form_ref` — design-time id формы из `operatonFormRef` / `camundaFormRef` / `formKey` |
+| `backend/config.py` | `SOTA_FORMS_URL`, `FORMS_WEBHOOK_TOKEN` |
+| `frontend/src/forms/SotaFormsTask.tsx` | Хост виджета sota-forms: одна загрузка бандла на страницу, `form:completed` → `onCompleted` |
+| `frontend/src/forms/FormRenderer.tsx` | Спрашивает sota-forms **до** обращения к движку; 404 → обычный form-js |
+
+### 16.3 Как это работает целиком
+
+```
+Импорт (design-time)
+  sota-forms → GET  {bpmn}/api/forms?process=obrashchenieKlienta
+             → GET  {bpmn}/api/forms/form_obrashchenieKlienta_klassifikaciya
+             → конвертация + отчёт → форма с source=operaton → правка → публикация
+
+Исполнение (runtime)
+  задача в sota-bpmn → GET /api/tasks/{taskId}/external-form
+                     → sota-forms /api/public/forms/by-operaton/{formRef}
+                     → <no-code-form form-id=… task-id={taskId}>
+  submit → POST {forms}/api/public/forms/{id}/submit {data, context:{taskId}}
+         → POST {bpmn}/api/tasks/{taskId}/complete {"data": …}  (синхронно, X-Forms-Token)
+         → 204 «Задача отправлена в процесс» | 409 «Задача уже завершена другим пользователем»
+```
+
+**Деградация везде безопасная.** sota-forms выключен или недоступен → sota-bpmn
+рисует form-js как раньше. sota-bpmn недоступен → импорт из файла работает,
+`/api/operaton/status` честно показывает причину. Форма ещё черновик → резолвер
+отдаёт 404, живую задачу неопубликованная форма не перехватывает.
+
+### 16.4 Решения, принятые по ходу
+
+1. **`checkbox_group` вместо автосоздания справочников** (§5.1) — реализован как
+   рекомендовано; раздел «Справочники» не засоряется служебными записями.
+2. **Синхронная доставка для задач Оператона.** Наш outbox с ретраями хорош для
+   обычных webhook-ов, но здесь пользователь должен сразу узнать про 409/404, а
+   не получить «Спасибо» и молча не сдвинуть процесс. Запись в доске доставок при
+   этом сохраняется — история не теряется.
+3. **Отсутствие `taskId` — ошибка 400, а не тихий пропуск.** Форма задачи без
+   рантайм-контекста не может ничего завершить; это ошибка вёрстки хоста, и
+   молчать о ней вреднее, чем упасть.
+4. **Резолвер живёт в sota-forms**, а не в sota-bpmn: правила санитизации slug
+   принадлежат одной стороне, иначе они разъедутся при первом же изменении.
+5. **Дескриптор внешней формы валидируется по форме.** Ответ 200 без `formId`/
+   `widgetSrc` не считается дескриптором — иначе случайный 200 от прокси уводил бы
+   рендеринг от form-js.
+6. **Секрет опционален и по умолчанию выключен** — существующие развёртывания
+   sota-bpmn продолжают работать без изменений.
+
+### 16.5 Проверено
+
+| Набор | Результат |
+|---|---|
+| sota-forms: юнит-тесты конвертера (`tests/test_operaton.py`) | 59 зелёных |
+| sota-forms: API-тесты импорта и возврата (`tests/test_operaton_api.py`) | 17 зелёных |
+| sota-forms: весь backend на реальном Postgres | 119 зелёных |
+| sota-forms: `tsc --noEmit` | чисто (единственная ошибка — в нетронутом `suggestControl`, была до правок) |
+| sota-forms: `ruff` | ноль новых замечаний относительно базы |
+| sota-bpmn: backend | 108 зелёных (было 100) |
+| sota-bpmn: frontend Vitest | 283 зелёных (было 277) |
+| sota-bpmn: `tsc -b` | чисто |
+
+### 16.6 Что осталось за рамками
+
+* Обновление уже импортированной формы из нового файла/каталога (Фаза 1.5).
+* Импорт `operaton:formData` из BPMN XML (Фаза 2).
+* Предзаполнение формы текущими переменными задачи (`GET /api/tasks/{id}/form`
+  отдаёт `data`, но виджет пока не принимает начальные значения снаружи).
+* Типизация переменных при возврате: массивы и файлы уходят как есть, движок
+  выводит тип сам. Для присланных форм (строки) это корректно, для мультивыбора
+  потребуется явный `Json`.
