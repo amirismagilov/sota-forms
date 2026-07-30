@@ -216,6 +216,8 @@ export interface FormListResult {
 export interface PublicForm extends FormSchema {
   design_tokens: { token: Record<string, any> };
   dictionaries: Dictionary[];
+  /** Operaton process variable name → our field id (empty for local forms). */
+  key_map?: Record<string, string>;
 }
 
 export interface Connection {

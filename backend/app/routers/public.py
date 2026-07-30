@@ -84,6 +84,11 @@ async def public_form(form_id: str, db: AsyncSession = Depends(get_db)):
         submit=snap.submit,
         design_tokens=acc.design_tokens,
         dictionaries=dicts,
+        source=f.source or "local",
+        # Process variable → our field id. The host page prefills using the names
+        # the ENGINE knows, so the widget needs this to translate them. Field
+        # names only — nothing sensitive.
+        key_map=(f.source_meta or {}).get("key_map", {}) if f.source == "operaton" else {},
     )
 
 

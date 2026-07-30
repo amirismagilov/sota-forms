@@ -107,6 +107,9 @@ class PublicFormOut(BaseModel):
     submit: dict[str, Any]
     design_tokens: dict[str, Any]
     dictionaries: list[dict[str, Any]]
+    source: str = "local"
+    # Operaton process variable name → our field id (empty for local forms).
+    key_map: dict[str, str] = Field(default_factory=dict)
 
 
 class SubmitIn(BaseModel):

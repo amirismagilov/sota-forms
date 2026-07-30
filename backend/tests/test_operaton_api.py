@@ -246,3 +246,20 @@ async def test_status_reports_unreachable_instead_of_raising(client):
     r = await client.get("/api/operaton/status")
     assert r.status_code == 200
     assert r.json()["ok"] is False  # nothing is listening in the test env
+
+
+# ------------------------------------------------------------- prefill map
+
+
+async def test_public_form_exposes_the_key_map_for_prefill(client):
+    """The host prefills using PROCESS variable names, so the widget needs the map."""
+    created = await _published(client)
+    body = (await client.get(f"/api/public/forms/{created['form_id']}")).json()
+    assert body["source"] == "operaton"
+    assert body["key_map"]["klassifikaciya_result"] == "klassifikaciya_result"
+
+
+async def test_local_form_has_no_key_map(client):
+    body = (await client.get("/api/public/forms/order_form")).json()
+    assert body["source"] == "local"
+    assert body["key_map"] == {}

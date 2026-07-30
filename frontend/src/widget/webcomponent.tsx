@@ -44,7 +44,7 @@ class NoCodeForm extends HTMLElement {
   private values: Record<string, any> = {};
 
   static get observedAttributes() {
-    return ['form-id', 'primary-color', 'border-radius', 'api-base', 'task-id', 'context'];
+    return ['form-id', 'primary-color', 'border-radius', 'api-base', 'task-id', 'context', 'values'];
   }
 
   constructor() {
@@ -103,6 +103,22 @@ class NoCodeForm extends HTMLElement {
       return;
     }
 
+    // Prefill. The host supplies values under the names IT knows — for an Operaton
+    // task that is the process variable name, which may differ from our field id
+    // when the key had to be sanitised (applicant.firstName → applicant_firstName).
+    let initialValues: Record<string, any> | undefined;
+    const rawValues = this.getAttribute('values');
+    if (rawValues) {
+      try {
+        const parsed = JSON.parse(rawValues);
+        const map = data.key_map || {};
+        initialValues = {};
+        for (const [k, v] of Object.entries(parsed)) initialValues[map[k] ?? k] = v;
+      } catch {
+        this.emit('form:error', { error: 'bad_values_attribute' });
+      }
+    }
+
     const token = { ...(data.design_tokens?.token || {}) };
     const pc = this.getAttribute('primary-color');
     const br = this.getAttribute('border-radius');
@@ -151,6 +167,7 @@ class NoCodeForm extends HTMLElement {
         ref={this.handleRef}
         schema={data}
         dictionaries={data.dictionaries || []}
+        initialValues={initialValues}
         tokens={{ token }}
         container={this.shadow as unknown as HTMLElement}
         cache={cache}
