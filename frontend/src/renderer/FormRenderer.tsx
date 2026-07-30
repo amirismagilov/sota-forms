@@ -52,6 +52,9 @@ export interface FormHandle {
 interface Props {
   schema: Pick<FormSchema, 'fields' | 'grid_columns' | 'submit' | 'title'>;
   dictionaries: Dictionary[];
+  /** Values known before the user types — e.g. the variables of an Operaton task
+   *  being reopened. Applied once per distinct payload; user edits always win. */
+  initialValues?: Record<string, any>;
   onSubmit?: (data: Record<string, any>) => Promise<{ successMessage?: string; redirectUrl?: string | null; submissionId?: string }>;
   onChange?: (field: string, value: any, all: Record<string, any>) => void;
   onError?: (errors: Record<string, string>) => void;
@@ -65,7 +68,7 @@ type DictItem = { code: string; label: string; attrs?: any };
 type SuggestItem = { value: string; label: string; data: any };
 
 const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
-  { schema, dictionaries, onSubmit, onChange, onError, showTitle = true, apiDictLoader, suggestLoader, fileUpload },
+  { schema, dictionaries, initialValues, onSubmit, onChange, onError, showTitle = true, apiDictLoader, suggestLoader, fileUpload },
   ref,
 ) {
   const [values, setValues] = useState<Record<string, any>>({});
@@ -115,6 +118,18 @@ const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
   }, [values, attrs, schema.fields]);
 
   // Seed default values when the form loads (only for fields not yet touched).
+  // Seed from the host BEFORE defaults, so a value the process already holds is
+  // not overwritten by the field's default. Keyed on the serialised payload so a
+  // re-render never wipes what the user has typed since.
+  const seeded = useRef<string | null>(null);
+  useEffect(() => {
+    if (!initialValues) return;
+    const key = JSON.stringify(initialValues);
+    if (seeded.current === key) return;
+    seeded.current = key;
+    setValues((prev) => ({ ...prev, ...initialValues }));
+  }, [initialValues]);
+
   useEffect(() => {
     setValues((prev) => {
       const next = { ...prev };
@@ -554,6 +569,11 @@ const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
         return wrap(f, <Select style={{ width: '100%' }} value={v} placeholder={f.placeholder || ''} options={(f.options || []).map((o) => ({ label: o.label, value: o.value }))} onChange={(x) => setValue(f, x)} allowClear />);
       case 'radio_group':
         return wrap(f, <Radio.Group value={v} onChange={(e) => setValue(f, e.target.value)}>{(f.options || []).map((o) => <Radio key={o.value} value={o.value}>{o.label}</Radio>)}</Radio.Group>);
+      // Multi-select over static options (Operaton checklist/taglist). The
+      // dictionary-backed variant is dict_checkbox; this one carries its values
+      // inline, so nothing has to be materialised into the dictionaries section.
+      case 'checkbox_group':
+        return wrap(f, <Checkbox.Group value={Array.isArray(v) ? v : []} options={(f.options || []).map((o) => ({ label: o.label, value: o.value }))} onChange={(x) => setValue(f, x)} />, false);
       case 'checkbox':
         return (
           <div>

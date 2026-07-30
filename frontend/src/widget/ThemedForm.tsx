@@ -9,6 +9,7 @@ import type { Dictionary, Field, FormSchema } from '../types';
 interface Props {
   schema: Pick<FormSchema, 'fields' | 'grid_columns' | 'submit' | 'title'>;
   dictionaries: Dictionary[];
+  initialValues?: Record<string, any>;
   tokens: { token?: Record<string, any> };
   container?: HTMLElement; // shadow root for style injection
   cache?: Entity;
@@ -24,7 +25,7 @@ interface Props {
 /** Ant Design form wrapped in a theme provider; style-isolated when a
  *  shadow-root container + cache are supplied (Web Component use, KP-10). */
 const ThemedForm = forwardRef<FormHandle, Props>(function ThemedForm(
-  { schema, dictionaries, tokens, container, cache, onSubmit, onChange, onError, apiDictLoader, suggestLoader, fileUpload, showTitle },
+  { schema, dictionaries, initialValues, tokens, container, cache, onSubmit, onChange, onError, apiDictLoader, suggestLoader, fileUpload, showTitle },
   ref,
 ) {
   const inner = (
@@ -37,6 +38,7 @@ const ThemedForm = forwardRef<FormHandle, Props>(function ThemedForm(
           ref={ref}
           schema={schema}
           dictionaries={dictionaries}
+          initialValues={initialValues}
           onSubmit={onSubmit}
           onChange={onChange}
           onError={onError}

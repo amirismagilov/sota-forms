@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..bpmn_client import auth_headers
+from ..config import get_settings
 from ..crypto import sign_payload
 from ..db import get_db
 from ..deps import get_account_by_id
 from ..dict_resolver import resolve_api_dictionary
 from ..models import Dictionary, Form, FormVersion, Submission, WebhookDelivery
+from ..operaton import resolve_placeholders
 from ..suggest import resolve_suggest
 from ..ratelimit import check_rate_limit
 from ..schemas import PublicFormOut, SubmitIn
@@ -80,6 +84,11 @@ async def public_form(form_id: str, db: AsyncSession = Depends(get_db)):
         submit=snap.submit,
         design_tokens=acc.design_tokens,
         dictionaries=dicts,
+        source=f.source or "local",
+        # Process variable → our field id. The host page prefills using the names
+        # the ENGINE knows, so the widget needs this to translate them. Field
+        # names only — nothing sensitive.
+        key_map=(f.source_meta or {}).get("key_map", {}) if f.source == "operaton" else {},
     )
 
 
@@ -125,6 +134,32 @@ async def form_suggest(form_id: str, body: dict | None = None, db: AsyncSession 
         raise HTTPException(502, f"suggest source error: {exc}") from exc
 
 
+@router.get("/forms/by-operaton/{operaton_form_id}")
+async def form_by_operaton_id(operaton_form_id: str, db: AsyncSession = Depends(get_db)):
+    """Which of our forms replaces this Operaton form? Used by the sota-bpmn host.
+
+    Only PUBLISHED forms resolve — a draft must never take over a live task.
+    Keeping the lookup here means the id-sanitisation rules live in exactly one
+    place instead of being reimplemented on the sota-bpmn side.
+    """
+    f = (
+        await db.execute(
+            select(Form).where(
+                Form.source == "operaton",
+                Form.source_meta["operaton_form_id"].astext == operaton_form_id,
+            )
+        )
+    ).scalars().first()
+    if not f or f.status == "archived" or not f.published_version:
+        raise HTTPException(404, "no published form for this Operaton form id")
+    return {
+        "form_id": f.form_id,
+        "title": f.title,
+        "published_version": f.published_version,
+        "process_key": (f.source_meta or {}).get("process_key"),
+    }
+
+
 @router.post("/dictionaries/{dict_id}/options")
 async def dictionary_options(dict_id: str, body: dict | None = None, db: AsyncSession = Depends(get_db)):
     """Resolve options for an API dictionary given current form values (ФР-39..42).
@@ -164,30 +199,110 @@ async def submit_form(form_id: str, body: SubmitIn, db: AsyncSession = Depends(g
     db.add(sub)
     await db.flush()
 
-    webhook_url = (f.submit or {}).get("webhookUrl") or acc.webhook_default
-    if webhook_url:
+    cfg = f.submit or {}
+    template = cfg.get("webhookUrl") or acc.webhook_default
+    settings = get_settings()
+
+    webhook_url = None
+    if template:
+        webhook_url, missing = resolve_placeholders(
+            template,
+            {
+                **(body.context or {}),
+                "bpmnBase": (settings.sota_bpmn_base or "").rstrip("/"),
+                "formId": form_id,
+                "submissionId": sub.id,
+            },
+        )
+        if missing:
+            # An Operaton form without a taskId cannot complete anything — that is
+            # a wiring bug in the host page, so fail loudly instead of dropping
+            # the submission into a webhook that can never be built.
+            sub.webhook_status = "no_context"
+            await db.commit()
+            raise HTTPException(
+                400,
+                "Форма ожидает контекст выполнения, но он не передан: "
+                + ", ".join(missing)
+                + ". Для задач Оператона встраивайте виджет с атрибутом task-id.",
+            )
+
+    if not webhook_url:
+        sub.webhook_status = "no_webhook"
+        await db.commit()
+        await db.refresh(sub)
+        return _submit_response(sub, cfg)
+
+    # `data` = the bare shape sota-bpmn's CompleteTaskRequest expects;
+    # `envelope` = our usual signed payload with submission metadata.
+    if cfg.get("payload") == "data":
+        payload = {"data": body.data}
+    else:
         payload = {
             "formId": form_id,
             "submissionId": sub.id,
             "data": body.data,
             "submittedAt": sub.created_at.isoformat(),
         }
-        db.add(
-            WebhookDelivery(
-                submission_id=sub.id,
-                form_id=form_id,
-                url=webhook_url,
-                payload={"body": payload, "signature": sign_payload(payload)},
-            )
-        )
-    else:
-        sub.webhook_status = "no_webhook"
+    headers = {"X-Signature": sign_payload(payload), "Content-Type": "application/json"}
+    if cfg.get("operatonComplete"):
+        headers.update(auth_headers())
+
+    delivery = WebhookDelivery(
+        submission_id=sub.id,
+        form_id=form_id,
+        url=webhook_url,
+        payload={"body": payload, "signature": headers["X-Signature"]},
+    )
+    db.add(delivery)
+
+    if cfg.get("delivery") != "sync":
+        await db.commit()
+        await db.refresh(sub)
+        return _submit_response(sub, cfg)
+
+    # Synchronous mode (Operaton task completion): the person pressing «Отправить»
+    # must learn right away that the task was already completed by someone else,
+    # instead of being told «Спасибо» while the delivery quietly retries.
+    delivery.attempts = 1
+    try:
+        async with httpx.AsyncClient(timeout=(settings.sota_bpmn_timeout or 10000) / 1000) as client:
+            resp = await client.post(webhook_url, json=payload, headers=headers)
+        delivery.last_status_code = resp.status_code
+        ok = 200 <= resp.status_code < 300
+        delivery.status = "delivered" if ok else "dead"
+        sub.webhook_status = "delivered" if ok else "failed"
+        if not ok:
+            delivery.last_error = f"HTTP {resp.status_code}: {resp.text[:300]}"
+    except Exception as exc:
+        delivery.status = "dead"
+        delivery.last_error = str(exc)[:300]
+        sub.webhook_status = "failed"
+        await db.commit()
+        raise HTTPException(502, f"Не удалось передать данные в процесс: {exc}") from exc
 
     await db.commit()
     await db.refresh(sub)
+    if delivery.status != "delivered":
+        raise HTTPException(status_code=502, detail=_engine_error(delivery.last_status_code, delivery.last_error))
+    return _submit_response(sub, cfg)
+
+
+def _submit_response(sub: Submission, cfg: dict) -> dict:
     return {
         "ok": True,
         "submissionId": sub.id,
-        "successMessage": (f.submit or {}).get("successMessage", "Спасибо!"),
-        "redirectUrl": (f.submit or {}).get("redirectUrl"),
+        "successMessage": cfg.get("successMessage", "Спасибо!"),
+        "redirectUrl": cfg.get("redirectUrl"),
     }
+
+
+def _engine_error(status_code: int | None, raw: str | None) -> str:
+    """Turn sota-bpmn's status codes into something a form filler understands."""
+    if status_code == 404:
+        return "Задача не найдена в процессе — возможно, она уже закрыта"
+    if status_code == 409:
+        return "Задача уже завершена другим пользователем"
+    if status_code in (401, 403):
+        return "Нет доступа к процессу: проверьте общий секрет интеграции"
+    return f"Процесс отклонил данные: {raw or status_code}"

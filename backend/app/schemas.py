@@ -78,6 +78,24 @@ class FormOut(FormIn):
     status: str = "draft"
     published_version: int | None = None
     has_draft_changes: bool = True
+    source: str = "local"
+    source_meta: dict[str, Any] = Field(default_factory=dict)
+
+
+# ---- Operaton import ----
+class OperatonImportIn(BaseModel):
+    """Import a form either by pulling it from sota-bpmn or from an uploaded file.
+
+    Exactly one of `schema` (raw form-js JSON) or `operaton_form_id` must be set.
+    """
+
+    schema_: dict[str, Any] | None = Field(default=None, alias="schema")
+    operaton_form_id: str | None = None
+    process_key: str | None = None
+    form_id: str | None = None
+    title: str | None = None
+
+    model_config = {"populate_by_name": True}
 
 
 # ---- Public ----
@@ -89,10 +107,16 @@ class PublicFormOut(BaseModel):
     submit: dict[str, Any]
     design_tokens: dict[str, Any]
     dictionaries: list[dict[str, Any]]
+    source: str = "local"
+    # Operaton process variable name → our field id (empty for local forms).
+    key_map: dict[str, str] = Field(default_factory=dict)
 
 
 class SubmitIn(BaseModel):
     data: dict[str, Any]
+    # Runtime context supplied by the embedding host, e.g. {"taskId": "..."} for
+    # an Operaton user task. Feeds the {{placeholders}} of the webhook URL.
+    context: dict[str, Any] = Field(default_factory=dict)
 
 
 class ProxyIn(BaseModel):

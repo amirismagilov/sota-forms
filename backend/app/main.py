@@ -17,6 +17,7 @@ from .routers import (
     forms,
     mock,
     mock_broker,
+    operaton,
     proxy,
     public,
     submissions,
@@ -52,7 +53,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-for r in (auth, connections, dictionaries, forms, account, submissions, public, proxy, mock, mock_broker, files, suggest):
+for r in (auth, connections, dictionaries, forms, account, submissions, public, proxy, mock, mock_broker, files, suggest, operaton):
     app.include_router(r.router)
 
 

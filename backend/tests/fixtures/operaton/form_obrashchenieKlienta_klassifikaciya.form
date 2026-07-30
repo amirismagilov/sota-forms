@@ -1,0 +1,42 @@
+{
+  "type": "default",
+  "id": "form_obrashchenieKlienta_klassifikaciya",
+  "components": [
+    {
+      "type": "select",
+      "id": "Field_klassifikaciya_result",
+      "key": "klassifikaciya_result",
+      "label": "Решение",
+      "validate": {
+        "required": true
+      },
+      "values": [
+        {
+          "label": "Требуется бэк-офис",
+          "value": "back_office_required"
+        },
+        {
+          "label": "Решается на первой линии",
+          "value": "resolved_at_first_line"
+        },
+        {
+          "label": "Тема отдельного процесса",
+          "value": "separate_process_topic"
+        }
+      ]
+    },
+    {
+      "type": "textarea",
+      "id": "Field_klassifikaciya_comment",
+      "key": "klassifikaciya_comment",
+      "label": "Комментарий"
+    }
+  ],
+  "executionPlatform": "Camunda Platform",
+  "executionPlatformVersion": "7.21.0",
+  "exporter": {
+    "name": "sota-bpmn",
+    "version": "1.0"
+  },
+  "schemaVersion": 16
+}

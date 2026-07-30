@@ -124,6 +124,52 @@ export interface Dictionary {
   api_config?: any;
 }
 
+export type FormSource = 'local' | 'operaton';
+
+export interface OperatonReport {
+  components_total: number;
+  mapped: number;
+  fields_total?: number;
+  warnings: { key?: string; code: string; message: string }[];
+  unsupported: { key?: string; type: string }[];
+}
+
+export interface OperatonMeta {
+  format?: string;
+  operaton_form_id?: string;
+  process_key?: string | null;
+  schema_version?: number | null;
+  imported_at?: string;
+  key_map?: Record<string, string>;
+  report?: OperatonReport;
+  warning_count?: number;
+}
+
+export interface OperatonProcess {
+  process_id: string;
+  name: string;
+  version?: number;
+  status?: string;
+}
+
+export interface OperatonFormSummary {
+  id: string;
+  name?: string | null;
+  processKey?: string | null;
+}
+
+export interface OperatonPreview {
+  form_id: string;
+  title: string;
+  grid_columns: number;
+  fields: Field[];
+  submit: FormSchema['submit'];
+  operaton_form_id: string;
+  process_key?: string | null;
+  key_map: Record<string, string>;
+  report: OperatonReport;
+}
+
 export interface FormSchema {
   id?: string;
   form_id: string;
@@ -135,7 +181,15 @@ export interface FormSchema {
     webhookUrl?: string;
     successMessage?: string;
     redirectUrl?: string | null;
+    // Operaton task completion: sync delivery, bare {"data": …} body and a
+    // server-injected shared secret.
+    delivery?: 'sync' | 'async';
+    payload?: 'envelope' | 'data';
+    operatonComplete?: boolean;
+    operatonProcessKey?: string;
   };
+  source?: FormSource;
+  source_meta?: OperatonMeta;
   status?: 'draft' | 'published' | 'archived';
   published_version?: number | null;
   has_draft_changes?: boolean;
@@ -162,6 +216,8 @@ export interface FormListResult {
 export interface PublicForm extends FormSchema {
   design_tokens: { token: Record<string, any> };
   dictionaries: Dictionary[];
+  /** Operaton process variable name → our field id (empty for local forms). */
+  key_map?: Record<string, string>;
 }
 
 export interface Connection {

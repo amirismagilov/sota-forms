@@ -42,7 +42,7 @@ import LayoutEditor, { ensureLayout } from './LayoutEditor';
 
 const LAYOUT_TYPES = ['section_header', 'divider', 'info_text'];
 const DICT_TYPES = ['dict_select', 'dict_radio', 'dict_checkbox'];
-const STATIC_OPT_TYPES = ['select_static', 'radio_group'];
+const STATIC_OPT_TYPES = ['select_static', 'radio_group', 'checkbox_group'];
 
 let idCounter = 0;
 function newFieldId() {
@@ -82,6 +82,15 @@ export default function FormEditor() {
   // field's position didn't match editIndex, letting a field reference itself).
   const currentFieldId = editIndex !== null ? form.fields[editIndex]?.id : null;
   const otherFields = form.fields.filter((f) => f.id !== currentFieldId);
+
+  // Fields imported from Operaton ARE process variables: a gateway downstream
+  // reads them by name. Renaming one only fails at runtime, long after the edit,
+  // so the id is locked here and the backend refuses the save as a second net.
+  const isOperaton = form.source === 'operaton';
+  const boundKeys = new Set(Object.values(form.source_meta?.key_map || {}));
+  const isBoundField = !!currentFieldId && boundKeys.has(currentFieldId);
+  const importWarnings = form.source_meta?.report?.warnings || [];
+  const importUnsupported = form.source_meta?.report?.unsupported || [];
 
   function openEditor(index: number | null) {
     // Clear the shared editor form first, otherwise values from the previously
@@ -204,6 +213,17 @@ export default function FormEditor() {
             </Tag>
             {form.has_draft_changes && form.published_version
               ? <Tag color="orange">неопубликованные изменения</Tag> : null}
+            {isOperaton && (
+              <>
+                <Tag color="purple">Из Оператона</Tag>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  ключ: {form.source_meta?.operaton_form_id}
+                  {form.source_meta?.process_key ? ` · процесс: ${form.source_meta.process_key}` : ''}
+                  {form.source_meta?.imported_at
+                    ? ` · импорт ${new Date(form.source_meta.imported_at).toLocaleDateString('ru-RU')}` : ''}
+                </Typography.Text>
+              </>
+            )}
             <span>Колонок:
               <Segmented
                 size="small"
@@ -214,6 +234,26 @@ export default function FormEditor() {
               />
             </span>
           </Space>
+
+          {isOperaton && (importWarnings.length > 0 || importUnsupported.length > 0) && (
+            <Alert
+              type="warning"
+              showIcon
+              closable
+              style={{ marginBottom: 12 }}
+              message={`При импорте не перенеслось: ${importUnsupported.length} компонентов, ${importWarnings.length} замечаний`}
+              description={
+                <div style={{ fontSize: 12 }}>
+                  {importUnsupported.map((u, i) => (
+                    <div key={`u${i}`}><code>{u.key || '—'}</code> — компонент <code>{u.type}</code> не поддерживается</div>
+                  ))}
+                  {importWarnings.map((w, i) => (
+                    <div key={`w${i}`}>{w.key ? <code>{w.key}</code> : null} {w.message}</div>
+                  ))}
+                </div>
+              }
+            />
+          )}
 
           <Segmented
             block
@@ -320,8 +360,15 @@ export default function FormEditor() {
               <Select options={[{ label: 'H1 — крупный', value: 1 }, { label: 'H2 — средний', value: 2 }, { label: 'H3 — обычный', value: 3 }]} />
             </AntForm.Item>
           )}
-          <AntForm.Item name="id" label="ID поля">
-            <Input />
+          <AntForm.Item
+            name="id"
+            label="ID поля"
+            tooltip={isBoundField ? 'Поле связано с переменной процесса Оператона — ID менять нельзя' : undefined}
+            extra={isBoundField
+              ? <Typography.Text type="secondary" style={{ fontSize: 12 }}>Переменная процесса — переименование сломает развилки</Typography.Text>
+              : undefined}
+          >
+            <Input disabled={isBoundField} />
           </AntForm.Item>
 
           {!LAYOUT_TYPES.includes(editType) && (

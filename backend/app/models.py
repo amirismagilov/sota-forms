@@ -92,6 +92,15 @@ class Form(Base):
     version: Mapped[int] = mapped_column(Integer, default=0)  # latest published version number
     published_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     has_draft_changes: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Where the form came from: local (built here) | operaton (imported from BPM).
+    # Immutable after creation — editing an imported form must not turn it "local",
+    # otherwise the «Из Оператона» section empties out after the first edit.
+    source: Mapped[str] = mapped_column(String, default="local", index=True)
+    # Import passport: Operaton form/process keys, key_map (our field.id → process
+    # variable) and the conversion report. Read-only for the frontend.
+    source_meta: Mapped[dict] = mapped_column(JSONB, default=dict)
+    # The original Operaton schema exactly as received (diff + re-import).
+    source_schema: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 

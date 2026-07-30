@@ -22,9 +22,21 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         yield session
 
 
+# create_all only creates MISSING tables — it never adds columns to a table that
+# already exists. These idempotent patches carry existing databases forward.
+_COLUMN_PATCHES = (
+    "ALTER TABLE forms ADD COLUMN IF NOT EXISTS source VARCHAR NOT NULL DEFAULT 'local'",
+    "ALTER TABLE forms ADD COLUMN IF NOT EXISTS source_meta JSONB NOT NULL DEFAULT '{}'::jsonb",
+    "ALTER TABLE forms ADD COLUMN IF NOT EXISTS source_schema JSONB",
+    "CREATE INDEX IF NOT EXISTS ix_forms_source ON forms (source)",
+)
+
+
 async def init_db() -> None:
     # Import models so they register on the metadata before create_all.
     from . import models  # noqa: F401
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        for stmt in _COLUMN_PATCHES:
+            await conn.exec_driver_sql(stmt)

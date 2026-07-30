@@ -28,6 +28,15 @@ class Settings(BaseSettings):
     # Base URL of the built-in mock external API (for the demo API dictionary).
     mock_ext_base: str = "http://backend:8000/api/mock/ext"
 
+    # ---- sota-bpmn (Operaton BFF) ----
+    # Where the process/forms catalogue and the task-complete endpoint live.
+    # Empty string disables the whole Operaton integration.
+    sota_bpmn_base: str = "http://host.docker.internal:8001"
+    # Shared secret sent as X-Forms-Token when completing an Operaton task.
+    # Must match FORMS_WEBHOOK_TOKEN on the sota-bpmn side; empty = no header.
+    sota_bpmn_token: str = ""
+    sota_bpmn_timeout: int = 10000  # ms
+
 
 @lru_cache
 def get_settings() -> Settings:
