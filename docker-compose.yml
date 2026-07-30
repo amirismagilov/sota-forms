@@ -25,6 +25,10 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://forms:forms@db:5432/forms
       REDIS_URL: redis://redis:6379/0
+      # sota-bpmn (Operaton BFF): form catalogue + task completion.
+      # Empty disables the «Из Оператона» integration; file import still works.
+      SOTA_BPMN_BASE: ${SOTA_BPMN_BASE:-}
+      SOTA_BPMN_TOKEN: ${SOTA_BPMN_TOKEN:-}
     depends_on:
       db:
         condition: service_healthy
@@ -40,6 +44,8 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://forms:forms@db:5432/forms
       REDIS_URL: redis://redis:6379/0
+      SOTA_BPMN_BASE: ${SOTA_BPMN_BASE:-}
+      SOTA_BPMN_TOKEN: ${SOTA_BPMN_TOKEN:-}
     depends_on:
       db:
         condition: service_healthy

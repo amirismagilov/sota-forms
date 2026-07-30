@@ -24,6 +24,8 @@ def _out(f: Form) -> FormOut:
         status=f.status,
         published_version=f.published_version,
         has_draft_changes=f.has_draft_changes,
+        source=f.source or "local",
+        source_meta=f.source_meta or {},
     )
 
 
@@ -44,17 +46,22 @@ async def list_forms(
     aid: str = Depends(require_account),
     q: str | None = None,
     status: str | None = None,
+    source: str | None = None,
     limit: int = Query(50, le=200),
     offset: int = 0,
     sort: str = "updated_at",
 ):
-    """Form registry: search, status filter, pagination, submission counts."""
+    """Form registry: search, status/source filters, pagination, submission counts."""
     base = select(Form).where(Form.account_id == aid)
     if q:
         like = f"%{q.lower()}%"
         base = base.where(or_(func.lower(Form.title).like(like), func.lower(Form.form_id).like(like)))
     if status:
         base = base.where(Form.status == status)
+    if source:
+        if source not in ("local", "operaton"):
+            raise HTTPException(400, "source must be 'local' or 'operaton'")
+        base = base.where(Form.source == source)
 
     total = (await db.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
 
@@ -76,6 +83,13 @@ async def list_forms(
         d = _out(f).model_dump()
         d["submission_count"] = counts.get(f.form_id, 0)
         d["updated_at"] = f.updated_at.isoformat() if f.updated_at else None
+        # The list only needs the passport, not the full key_map/report.
+        meta = f.source_meta or {}
+        d["source_meta"] = {
+            k: meta.get(k) for k in ("operaton_form_id", "process_key", "imported_at") if meta.get(k)
+        }
+        if (meta.get("report") or {}).get("warnings"):
+            d["source_meta"]["warning_count"] = len(meta["report"]["warnings"])
         items.append(d)
     return {"items": items, "total": total, "limit": limit, "offset": offset}
 
@@ -97,11 +111,31 @@ async def create_form(body: FormIn, db: AsyncSession = Depends(get_db), aid: str
 
 
 @router.put("/{form_pk}", response_model=FormOut)
-async def update_form(form_pk: str, body: FormIn, db: AsyncSession = Depends(get_db), aid: str = Depends(require_account)):
+async def update_form(
+    form_pk: str,
+    body: FormIn,
+    db: AsyncSession = Depends(get_db),
+    aid: str = Depends(require_account),
+    allow_key_changes: bool = False,
+):
     """Save the working DRAFT. Does not publish — the live widget is untouched."""
     f = await _owned(db, form_pk, aid)
     if body.form_id != f.form_id and await _slug_taken(db, body.form_id):
         raise HTTPException(409, f"form_id '{body.form_id}' already exists")
+
+    # Fields imported from Operaton ARE process variables: their ids feed the
+    # gateways downstream. Dropping or renaming one makes the engine fail at
+    # runtime with PropertyNotFound, long after the edit — so refuse loudly here.
+    if (f.source or "local") == "operaton" and not allow_key_changes:
+        bound = set((f.source_meta or {}).get("key_map", {}).values())
+        present = {x.get("id") for x in (body.fields or [])}
+        missing = sorted(bound - present)
+        if missing:
+            raise HTTPException(
+                409,
+                "Эти поля связаны с переменными процесса Оператона и не могут быть "
+                f"переименованы или удалены: {', '.join(missing)}",
+            )
     f.form_id = body.form_id
     f.title = body.title
     f.grid_columns = body.grid_columns
