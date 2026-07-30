@@ -99,7 +99,8 @@ docker compose up --build
 | `SOTA_BPMN_BASE` | URL sota-bpmn. Пусто — интеграция выключена, импорт из файла работает |
 | `SOTA_BPMN_TOKEN` | Общий секрет, уходит в `X-Forms-Token`; должен совпадать с `FORMS_WEBHOOK_TOKEN` в sota-bpmn |
 
-Подробности и правила конвертации — [`docs/operaton-import-spec.md`](docs/operaton-import-spec.md).
+Как этим пользоваться — [`docs/operaton-howto.md`](docs/operaton-howto.md).
+Правила конвертации и техническая спецификация — [`docs/operaton-import-spec.md`](docs/operaton-import-spec.md).
 
 ### Доставка данных (execute-worker + доска)
 - Submit пишет заполнение в БД и кладёт задачу в **outbox**.
