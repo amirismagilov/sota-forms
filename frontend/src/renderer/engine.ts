@@ -1,11 +1,37 @@
-import type { Condition, Dictionary, Field } from '../types';
+import type { Condition, ConditionNode, Dictionary, Field } from '../types';
+
+/** Follow a dot-path into the collected values: `credit_check.decision`. */
+export function readPath(values: Record<string, any>, path: string): any {
+  if (path in values) return values[path]; // plain field id wins — ids may contain no dots anyway
+  let node: any = values;
+  for (const part of String(path || '').split('.')) {
+    if (node == null) return undefined;
+    node = Array.isArray(node) ? node[Number(part)] : node[part];
+  }
+  return node;
+}
 
 // ---- Condition evaluation (visibleIf / requiredIf) ----
-export function evalCondition(cond: Condition | undefined, values: Record<string, any>): boolean {
-  if (!cond || !cond.fieldId) return true;
-  const v = values[cond.fieldId];
-  const target = cond.value;
-  switch (cond.operator) {
+export function evalCondition(cond: ConditionNode | undefined, values: Record<string, any>): boolean {
+  if (!cond) return true;
+  // Groups: «все условия» / «любое из» / отрицание. A form authored before these
+  // existed carries a bare Condition, which falls through to the logic below.
+  if ('all' in cond) return (cond.all || []).every((c) => evalCondition(c, values));
+  if ('any' in cond) {
+    const list = cond.any || [];
+    return list.length === 0 || list.some((c) => evalCondition(c, values));
+  }
+  if ('not' in cond) return !evalCondition(cond.not, values);
+
+  const leaf = cond as Condition;
+  if (!leaf.fieldId) return true;
+  const v = readPath(values, leaf.fieldId);
+  const target = leaf.value;
+  return evalLeaf(v, leaf.operator, target);
+}
+
+function evalLeaf(v: any, operator: Condition['operator'], target: any): boolean {
+  switch (operator) {
     case 'eq':
       return String(v ?? '') === String(target ?? '');
     case 'neq':

@@ -18,6 +18,7 @@ interface Props {
   onError?: (errors: Record<string, string>) => void;
   apiDictLoader?: (dictId: string, values: Record<string, any>) => Promise<{ code: string; label: string; attrs?: any }[]>;
   suggestLoader?: (field: Field, query: string, values: Record<string, any>) => Promise<{ value: string; label: string; data: any }[]>;
+  checkRunner?: (field: Field, values: Record<string, any>) => Promise<{ ok: boolean; data?: any; error?: string }>;
   fileUpload?: (file: File) => Promise<{ id: string; url: string; filename: string; size: number }>;
   showTitle?: boolean;
 }
@@ -25,7 +26,7 @@ interface Props {
 /** Ant Design form wrapped in a theme provider; style-isolated when a
  *  shadow-root container + cache are supplied (Web Component use, KP-10). */
 const ThemedForm = forwardRef<FormHandle, Props>(function ThemedForm(
-  { schema, dictionaries, initialValues, tokens, container, cache, onSubmit, onChange, onError, apiDictLoader, suggestLoader, fileUpload, showTitle },
+  { schema, dictionaries, initialValues, tokens, container, cache, onSubmit, onChange, onError, apiDictLoader, suggestLoader, checkRunner, fileUpload, showTitle },
   ref,
 ) {
   const inner = (
@@ -44,6 +45,7 @@ const ThemedForm = forwardRef<FormHandle, Props>(function ThemedForm(
           onError={onError}
           apiDictLoader={apiDictLoader}
           suggestLoader={suggestLoader}
+          checkRunner={checkRunner}
           fileUpload={fileUpload}
           showTitle={showTitle}
         />

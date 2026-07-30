@@ -1,9 +1,36 @@
 export type Operator = 'eq' | 'neq' | 'contains' | 'empty' | 'not_empty' | 'gt' | 'lt';
 
 export interface Condition {
+  /** Field id, or a dot-path into a value object: `credit_check.decision`. */
   fieldId: string;
   operator: Operator;
   value?: any;
+}
+
+/**
+ * Visibility/requirement rule. Historically a single `Condition`; now it can also
+ * be a group, so «показать, если A И Б» is expressible. The plain form is still
+ * accepted everywhere — every form built before this change keeps working.
+ */
+export type ConditionNode =
+  | Condition
+  | { all: ConditionNode[] }
+  | { any: ConditionNode[] }
+  | { not: ConditionNode };
+
+/** Ask an external system what to do next, then let conditions read the answer. */
+export interface CheckConfig {
+  connectionId?: string;
+  method?: 'GET' | 'POST';
+  endpoint?: string;
+  /** JSON template for the request; `{{field}}` is substituted server-side. */
+  body?: string;
+  /** Where the useful payload sits in the response, e.g. `data.result`. */
+  path?: string;
+  buttonLabel?: string;
+  hintBefore?: string;
+  /** Changing any of these clears the verdict, so it can never go stale. */
+  dependsOn?: string[];
 }
 
 export interface FieldMask {
@@ -62,8 +89,12 @@ export interface Field {
   calcPrefix?: string;
   calcSuffix?: string;
   calcDecimals?: number;
-  visibleIf?: Condition;
-  requiredIf?: Condition;
+  visibleIf?: ConditionNode;
+  requiredIf?: ConditionNode;
+  /** Id of a `section_header` field whose visibility this field inherits. */
+  inSection?: string;
+  /** Config of an `api_check` field. */
+  check?: CheckConfig;
   rows?: number;
   headingLevel?: 1 | 2 | 3;
   fileValidation?: FileValidation;

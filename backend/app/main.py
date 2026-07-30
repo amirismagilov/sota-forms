@@ -11,6 +11,7 @@ from .db import init_db
 from .routers import (
     account,
     auth,
+    checks,
     connections,
     dictionaries,
     files,
@@ -53,7 +54,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-for r in (auth, connections, dictionaries, forms, account, submissions, public, proxy, mock, mock_broker, files, suggest, operaton):
+for r in (auth, connections, dictionaries, forms, account, submissions, public, proxy, mock, mock_broker, files, suggest, operaton, checks):
     app.include_router(r.router)
 
 

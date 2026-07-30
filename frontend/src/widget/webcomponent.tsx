@@ -154,6 +154,13 @@ class NoCodeForm extends HTMLElement {
       const res = (await axios.post(`${api}/public/forms/${formId}/suggest`, { fieldId: field.id, query, values })).data;
       return res.items || [];
     };
+    const checkRunner = async (field: any, vals: Record<string, any>) => {
+      try {
+        return (await axios.post(`${api}/public/forms/${formId}/check`, { fieldId: field.id, values: vals })).data;
+      } catch (e: any) {
+        return { ok: false, error: e?.response?.data?.detail || 'Проверка не удалась' };
+      }
+    };
     const fileUpload = async (file: File) => {
       const fd = new FormData();
       fd.append('file', file);
@@ -176,6 +183,7 @@ class NoCodeForm extends HTMLElement {
         onError={onError}
         apiDictLoader={apiDictLoader}
         suggestLoader={suggestLoader}
+        checkRunner={checkRunner}
         fileUpload={fileUpload}
       />,
     );
