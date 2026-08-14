@@ -26,13 +26,12 @@ interface Props {
   apiDictLoader?: (dictId: string, values: Record<string, any>) => Promise<{ code: string; label: string; attrs?: any }[]>;
   suggestLoader?: (field: Field, query: string, values: Record<string, any>) => Promise<{ value: string; label: string; data: any }[]>;
   fileUpload?: (file: File) => Promise<{ id: string; url: string; filename: string; size: number }>;
-  showTitle?: boolean;
 }
 
 /** Ant Design form wrapped in a theme provider; style-isolated when a
  *  shadow-root container + cache are supplied (Web Component use, KP-10). */
 const ThemedForm = forwardRef<FormHandle, Props>(function ThemedForm(
-  { schema, dictionaries, initialValues, tokens, container, cache, onSubmit, onChange, onError, onOutcome, previewStep, apiDictLoader, suggestLoader, fileUpload, showTitle },
+  { schema, dictionaries, initialValues, tokens, container, cache, onSubmit, onChange, onError, onOutcome, previewStep, apiDictLoader, suggestLoader, fileUpload },
   ref,
 ) {
   const inner = (
@@ -54,7 +53,6 @@ const ThemedForm = forwardRef<FormHandle, Props>(function ThemedForm(
           apiDictLoader={apiDictLoader}
           suggestLoader={suggestLoader}
           fileUpload={fileUpload}
-          showTitle={showTitle}
         />
       </AntApp>
     </ConfigProvider>

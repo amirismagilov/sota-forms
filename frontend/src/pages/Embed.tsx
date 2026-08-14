@@ -135,6 +135,14 @@ export default function Embed() {
   );
 }
 
+/**
+ * Один обмен — двумя репликами: что сказала форма и что ответила система.
+ *
+ * Плоским списком блоков было не видно главного — что это диалог, у которого
+ * есть вторая сторона. Ответ теперь занимает столько же места, сколько запрос,
+ * даже когда сырое тело в браузер не уходит: тогда в реплике стоит то, что
+ * сервер из этого тела вывел — сработавшее правило и его исход.
+ */
 function ExchangeCard({ x }: { x: Exchange }) {
   const o = x.outcome || {};
   const resp = o.response;
@@ -155,56 +163,90 @@ function ExchangeCard({ x }: { x: Exchange }) {
         </Space>
       }
     >
-      {x.error && <Alert type="error" showIcon message={x.error} style={{ marginBottom: 8 }} />}
+      <Turn tone="out" title="Форма отправила">
+        {Object.keys(x.sent).length
+          ? <Code>{JSON.stringify(x.sent, null, 2)}</Code>
+          : <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              Данные не ушли — шаг оборвался раньше отправки.
+            </Typography.Text>}
+      </Turn>
 
-      {!!Object.keys(x.sent).length && (
-        <Block title="Отправлено">{JSON.stringify(x.sent, null, 2)}</Block>
-      )}
+      <Turn
+        tone={x.error ? 'error' : 'in'}
+        title={x.error
+          ? 'Ответа не было'
+          : `Система ответила${resp?.status ? ` · HTTP ${resp.status}` : ''}`}
+      >
+        {x.error
+          ? <Alert type="error" showIcon message={x.error} />
+          : resp
+            ? <Code>{JSON.stringify(resp.body, null, 2)}</Code>
+            : (
+              // Не молчим о том, почему тела ответа нет: без этого выглядит как баг.
+              <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 0 }}>
+                Сырое тело не показано — оно разбирается на сервере и в браузер не уходит.
+                Включить: «Флоу отправки» → блок 3 → <b>Отдавать сырой ответ</b>.
+              </Typography.Paragraph>
+            )}
 
-      {resp
-        ? (
-          <Block title={`Ответ системы${resp.status ? ` · HTTP ${resp.status}` : ''}`}>
-            {JSON.stringify(resp.body, null, 2)}
-          </Block>
-        )
-        : !x.error && (
-          // Не молчим о том, почему тела ответа нет: без этого выглядит как баг.
-          <Typography.Paragraph type="secondary" style={{ fontSize: 12, margin: '4px 0 8px' }}>
-            Тело ответа не показано — оно разбирается на сервере и в браузер не уходит.
-            Включить: «Флоу отправки» → блок 3 → <b>Отдавать сырой ответ</b>.
-          </Typography.Paragraph>
-        )}
-
-      {o.kind === 'fields' && (
-        <Typography.Paragraph style={{ fontSize: 12, marginBottom: 0 }}>
-          Открыт шаг <b>{o.stepTitle || o.stepId}</b>
-          {o.fieldIds?.length ? ` · ${o.fieldIds.length} полей` : ''}
-          {o.values && Object.keys(o.values).length
-            ? <> · подставлено: {Object.entries(o.values).map(([k, v]) => (
-              <Tag key={k} style={{ fontFamily: 'monospace' }}>{k} = {v === null ? '—' : String(v)}</Tag>
-            ))}</>
-            : null}
-        </Typography.Paragraph>
-      )}
-      {o.kind === 'message' && (
-        <Typography.Paragraph style={{ fontSize: 12, marginBottom: 0 }}>
-          Показано: <b>{o.title || o.text}</b>{o.title && o.text ? ` — ${o.text}` : ''}
-        </Typography.Paragraph>
-      )}
-      {o.kind === 'redirect' && (
-        <Typography.Paragraph style={{ fontSize: 12, marginBottom: 0 }}>Переход на <code>{o.url}</code></Typography.Paragraph>
-      )}
+        {!x.error && <Derived outcome={o} matchedRule={x.matchedRule} hasBody={!!resp} />}
+      </Turn>
     </Card>
   );
 }
 
-function Block({ title, children }: { title: string; children: React.ReactNode }) {
+/** Что сервер вывел из ответа — это и есть содержательная часть реплики. */
+function Derived({ outcome: o, matchedRule, hasBody }: { outcome: any; matchedRule?: string | null; hasBody: boolean }) {
+  return (
+    <div style={{ marginTop: hasBody ? 8 : 6, paddingTop: 6, borderTop: '1px dashed #d9f7be' }}>
+      <Typography.Paragraph style={{ fontSize: 12, marginBottom: 0 }}>
+        {matchedRule
+          ? <>Сработало правило <b>{matchedRule}</b> → </>
+          : <>Ни одно правило не подошло → </>}
+        {o.kind === 'fields' && (
+          <>открыт шаг <b>{o.stepTitle || o.stepId}</b>
+            {o.fieldIds?.length ? ` · ${o.fieldIds.length} полей` : ''}
+            {o.values && Object.keys(o.values).length
+              ? <> · подставлено: {Object.entries(o.values).map(([k, v]) => (
+                <Tag key={k} style={{ fontFamily: 'monospace' }}>{k} = {v === null ? '—' : String(v)}</Tag>
+              ))}</>
+              : null}
+          </>
+        )}
+        {o.kind === 'message' && (
+          <>показано <b>{o.title || o.text}</b>{o.title && o.text ? ` — ${o.text}` : ''}</>
+        )}
+        {o.kind === 'redirect' && <>переход на <code>{o.url}</code></>}
+        {o.kind === 'none' && <>форма осталась на месте</>}
+      </Typography.Paragraph>
+    </div>
+  );
+}
+
+/** Реплика диалога: «наружу» — серая, «к нам» — зелёная, обрыв связи — красная. */
+function Turn({ tone, title, children }: { tone: 'out' | 'in' | 'error'; title: string; children: React.ReactNode }) {
+  const skin = {
+    out: { bg: '#fafafa', bar: '#d9d9d9', arrow: '→' },
+    in: { bg: '#f6ffed', bar: '#b7eb8f', arrow: '←' },
+    error: { bg: '#fff2f0', bar: '#ffccc7', arrow: '←' },
+  }[tone];
   return (
     <div style={{ marginBottom: 8 }}>
-      <Typography.Text type="secondary" style={{ fontSize: 11 }}>{title}</Typography.Text>
-      <pre style={{ margin: '2px 0 0', fontSize: 12, background: '#fafafa', padding: 8, borderRadius: 6, maxHeight: 220, overflow: 'auto' }}>
+      <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+        <span style={{ fontFamily: 'monospace' }}>{skin.arrow}</span> {title}
+      </Typography.Text>
+      <div style={{
+        marginTop: 2, padding: 8, borderRadius: 6,
+        background: skin.bg, borderLeft: `3px solid ${skin.bar}`,
+      }}>
         {children}
-      </pre>
+      </div>
     </div>
+  );
+}
+
+function Code({ children }: { children: React.ReactNode }) {
+  return (
+    <pre style={{ margin: 0, fontSize: 12, maxHeight: 220, overflow: 'auto' }}>{children}</pre>
   );
 }
