@@ -21,23 +21,29 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Проверить, что секреты заданы
+        id: secrets
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_USER: ${{ secrets.SSH_USER }}
           SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
         run: |
-          # Без этой проверки ssh-action падает с «error: missing server host» —
-          # по такому сообщению не догадаться, что дело в незаполненных секретах.
+          # Незаданные секреты — это НЕ поломка, а «выкатываем руками».
+          # Раньше job падал с «error: missing server host», и каждый коммит в main
+          # получал красный крест, по которому не отличить настоящую аварию от
+          # осознанной ручной схемы. Теперь — предупреждение и пропуск.
           missing=""
           [ -n "$SSH_HOST" ] || missing="$missing SSH_HOST"
           [ -n "$SSH_USER" ] || missing="$missing SSH_USER"
           [ -n "$SSH_KEY" ]  || missing="$missing SSH_PRIVATE_KEY"
           if [ -n "$missing" ]; then
-            echo "::error::Не заданы секреты:$missing — Settings → Secrets and variables → Actions"
-            exit 1
+            echo "::warning::Автодеплой пропущен — не заданы секреты:$missing (Settings → Secrets and variables → Actions). Выкат руками: ./scripts/deploy.sh"
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Deploy via SSH
+        if: steps.secrets.outputs.configured == 'true'
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.SSH_HOST }}

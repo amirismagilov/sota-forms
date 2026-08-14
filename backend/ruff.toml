@@ -3,7 +3,15 @@ target-version = "py312"
 
 [lint]
 select = ["E", "F", "I", "UP", "B"]
-ignore = ["B008"]  # FastAPI Depends() in defaults is idiomatic
+ignore = [
+    "B008",   # FastAPI Depends() в аргументах по умолчанию — идиома фреймворка
+    # UP038 требует isinstance(x, int | float) вместо isinstance(x, (int, float)).
+    # Правило ОТОЗВАНО самим ruff: «isn't recommended practice… is also slightly
+    # slower» — union создаётся на каждый вызов. Наша версия (0.9.1, см.
+    # requirements.txt) его ещё выдаёт, и из-за этого падал весь backend-гейт.
+    # Переписывать рабочий код под отозванное правило смысла нет.
+    "UP038",
+]
 
 [lint.per-file-ignores]
 "app/seed.py" = ["E501"]  # inline demo fixture data
