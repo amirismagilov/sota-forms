@@ -37,6 +37,19 @@ class Settings(BaseSettings):
     sota_bpmn_token: str = ""
     sota_bpmn_timeout: int = 10000  # ms
 
+    # ---- Auto-sync of the Operaton form catalogue ----
+    # When on, a background loop pulls newly deployed process forms into the
+    # registry, so a process deployed in sota-bpmn shows up here without anyone
+    # pressing a button. Off by default: importing into someone's account on a
+    # timer is only wanted when explicitly asked for.
+    operaton_auto_sync: bool = False
+    operaton_sync_interval: int = 300  # seconds between passes
+    # Which account receives the forms. Empty = default_account_id.
+    operaton_sync_account: str = ""
+    # Publish imported forms immediately. Off by default — a form pulled by a
+    # timer has been reviewed by nobody, and publishing makes it live for tasks.
+    operaton_sync_publish: bool = False
+
 
 @lru_cache
 def get_settings() -> Settings:

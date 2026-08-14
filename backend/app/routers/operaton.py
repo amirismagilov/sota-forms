@@ -6,17 +6,15 @@ single transaction: a half-imported form never exists.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import bpmn_client
 from ..auth import current_claims, require_account
 from ..db import get_db
-from ..models import Form
 from ..operaton import ConversionResult, OperatonSchemaError, convert_operaton_form, operaton_submit_config
-from ..schemas import FormOut, OperatonImportIn
+from ..operaton_sync import build_form, sync_account
+from ..schemas import FormOut, OperatonImportIn, OperatonSyncIn
 from .forms import _out, _slug_taken
 
 router = APIRouter(prefix="/api/operaton", tags=["operaton"])
@@ -101,31 +99,25 @@ async def import_operaton_form(
         raise HTTPException(409, f"form_id '{body.form_id}' already exists")
     slug = await _unique_slug(db, requested)
 
-    f = Form(
-        account_id=aid,
-        form_id=slug,
-        title=body.title or res.title,
-        grid_columns=res.grid_columns,
-        fields=res.fields,
-        submit=operaton_submit_config(process_key),
-        status="draft",
-        version=0,
-        has_draft_changes=True,
-        source="operaton",
-        source_meta={
-            "format": "operaton_form_json",
-            "operaton_form_id": res.operaton_form_id,
-            "process_key": process_key,
-            "schema_version": res.schema_version,
-            "execution_platform": res.execution_platform,
-            "imported_at": datetime.now(UTC).isoformat(),
-            "imported_by": claims.get("sub"),
-            "key_map": res.key_map,
-            "report": res.report(),
-        },
-        source_schema=schema,
-    )
+    f = build_form(aid, slug, body.title or res.title, res, schema, process_key, claims.get("sub"))
     db.add(f)
     await db.commit()
     await db.refresh(f)
     return _out(f)
+
+
+@router.post("/sync")
+async def sync_forms(
+    body: OperatonSyncIn,
+    db: AsyncSession = Depends(get_db),
+    aid: str = Depends(require_account),
+    claims: dict = Depends(current_claims),
+):
+    """Pull every form of a process (or of all processes) in one go.
+
+    Same code path as the background auto-sync, so a form imported by hand and one
+    imported automatically are identical.
+    """
+    return await sync_account(
+        db, aid, process_key=body.process_key, publish=body.publish, user_id=claims.get("sub")
+    )

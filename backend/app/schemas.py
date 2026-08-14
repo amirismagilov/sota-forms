@@ -98,6 +98,15 @@ class OperatonImportIn(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class OperatonSyncIn(BaseModel):
+    """Pull every form of a process at once (omit process_key for all processes)."""
+
+    process_key: str | None = None
+    # Forms already imported are skipped, never silently overwritten — a re-import
+    # would discard edits the user made after the first import.
+    publish: bool = False
+
+
 # ---- Public ----
 class PublicFormOut(BaseModel):
     form_id: str

@@ -208,6 +208,7 @@ export default function FormsList() {
         open={operatonOpen}
         onClose={() => setOperatonOpen(false)}
         onImported={(pk) => { setOperatonOpen(false); nav(`/forms/${pk}`); }}
+        onBulkImported={() => { setOperatonOpen(false); setSource('operaton'); setPage(1); load(); }}
       />
 
       <Modal title="Новая форма" open={open} onOk={onCreate} onCancel={() => setOpen(false)} okText="Создать">

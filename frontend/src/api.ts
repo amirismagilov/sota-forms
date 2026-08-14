@@ -160,4 +160,26 @@ export const operatonPreview = (body: OperatonImportBody) =>
 export const operatonImport = (body: OperatonImportBody) =>
   api.post<FormSchema>('/operaton/import', body).then((r) => r.data);
 
+// Bulk: pull every form of a process at once. Already-imported forms are skipped.
+export interface OperatonSyncItem {
+  operaton_form_id: string;
+  status: 'imported' | 'skipped' | 'failed';
+  id?: string;
+  form_id?: string;
+  title?: string;
+  detail?: string;
+  published?: boolean;
+  warnings?: number;
+  unsupported?: number;
+}
+export interface OperatonSyncResult {
+  items: OperatonSyncItem[];
+  imported: number;
+  skipped: number;
+  failed: number;
+  message?: string;
+}
+export const operatonSync = (body: { process_key?: string; publish?: boolean }) =>
+  api.post<OperatonSyncResult>('/operaton/sync', body).then((r) => r.data);
+
 export default api;

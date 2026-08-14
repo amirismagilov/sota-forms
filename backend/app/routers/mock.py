@@ -47,6 +47,10 @@ _USERS = [
     {"id": "u4", "name": "Кузнецова Анна", "email": "kuznecova@company.ru", "role": "manager", "department": "Лизинг", "active": True},
     {"id": "u5", "name": "Смирнов Алексей", "email": "smirnov@company.ru", "role": "admin", "department": "Администрация", "active": True},
     {"id": "u6", "name": "Волкова Ольга", "email": "volkova@company.ru", "role": "manager", "department": "Лизинг", "active": False},
+    {"id": "u7", "name": "Козлов Дмитрий", "email": "kozlov@company.ru", "role": "manager", "department": "Продажи", "active": True},
+    {"id": "u8", "name": "Новикова Елена", "email": "novikova@company.ru", "role": "manager", "department": "Лизинг", "active": True},
+    {"id": "u9", "name": "Морозов Артём", "email": "morozov@company.ru", "role": "manager", "department": "Продажи", "active": True},
+    {"id": "u10", "name": "Лебедева Светлана", "email": "lebedeva@company.ru", "role": "manager", "department": "Лизинг", "active": True},
 ]
 
 
