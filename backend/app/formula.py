@@ -51,7 +51,7 @@ def _to_number(value: Any) -> float:
         return 0.0
     if isinstance(value, bool):
         return 1.0 if value else 0.0
-    if isinstance(value, (int, float)):
+    if isinstance(value, int | float):
         return float(value)
     if isinstance(value, str):
         cleaned = value.replace(" ", "").replace(",", ".")
@@ -73,7 +73,7 @@ def _eval_node(node: ast.AST, env: dict[str, Any]) -> Any:
     if isinstance(node, ast.Expression):
         return _eval_node(node.body, env)
     if isinstance(node, ast.Constant):
-        if isinstance(node.value, (int, float, bool)):
+        if isinstance(node.value, int | float | bool):
             return node.value
         raise FormulaError("only numeric/boolean literals allowed")
     if isinstance(node, ast.Name):
@@ -83,7 +83,7 @@ def _eval_node(node: ast.AST, env: dict[str, Any]) -> Any:
     if isinstance(node, ast.BinOp) and type(node.op) in _BIN_OPS:
         left = _to_number(_eval_node(node.left, env))
         right = _to_number(_eval_node(node.right, env))
-        if isinstance(node.op, (ast.Div, ast.Mod)) and right == 0:
+        if isinstance(node.op, ast.Div | ast.Mod) and right == 0:
             return 0.0
         return _BIN_OPS[type(node.op)](left, right)
     if isinstance(node, ast.UnaryOp) and type(node.op) in _UNARY_OPS:

@@ -483,7 +483,6 @@ const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
         style={{ width: '100%' }}
         value={v}
         options={opts}
-        optionLabelProp="value"
         onSearch={doSearch}
         onChange={(val) => setValue(f, val)}
         onSelect={(val, option: any) => {
