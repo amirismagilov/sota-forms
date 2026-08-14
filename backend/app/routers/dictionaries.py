@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import require_account
 from ..db import get_db
-from ..dict_resolver import probe_api_dictionary, resolve_api_dictionary
+from ..dict_resolver import probe_api_dictionary
 from ..models import Dictionary
 from ..schemas import DictionaryIn, DictionaryOut
 

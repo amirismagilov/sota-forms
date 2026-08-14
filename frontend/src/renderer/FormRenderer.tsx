@@ -22,8 +22,9 @@ import {
   message,
 } from 'antd';
 import { cloneElement, forwardRef, isValidElement, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
-import type { Dictionary, Field, FormSchema } from '../types';
+import type { Dictionary, Field, FormSchema, ResolvedOutcome, SubmitResult } from '../types';
 import { dictItemsFor, evalCondition, evalFormula } from './engine';
+import { fieldStep, findStep, flowSteps, MAIN_STEP, normalizeButton } from './flow';
 import FloatingField from './FloatingField';
 import { maskValue } from './masks';
 import SignaturePad from './SignaturePad';
@@ -47,6 +48,8 @@ export interface FormHandle {
   validate: () => { valid: boolean; errors: Record<string, string> };
   reset: () => void;
   submit: () => void;
+  /** Перейти на шаг флоу вручную (предпросмотр в конструкторе). */
+  goToStep: (stepId: string) => void;
 }
 
 interface Props {
@@ -55,9 +58,18 @@ interface Props {
   /** Values known before the user types — e.g. the variables of an Operaton task
    *  being reopened. Applied once per distinct payload; user edits always win. */
   initialValues?: Record<string, any>;
-  onSubmit?: (data: Record<string, any>) => Promise<{ successMessage?: string; redirectUrl?: string | null; submissionId?: string }>;
+  onSubmit?: (
+    data: Record<string, any>,
+    stepId: string,
+    /** Пропуск на следующий шаг, выданный бэкендом на предыдущем. */
+    continuation: { submissionId?: string; flowToken?: string },
+  ) => Promise<SubmitResult>;
   onChange?: (field: string, value: any, all: Record<string, any>) => void;
   onError?: (errors: Record<string, string>) => void;
+  /** Исход шага, посчитанный бэкендом (для событий виджета). */
+  onOutcome?: (outcome: ResolvedOutcome, stepId: string) => void;
+  /** Показывать шаг принудительно — предпросмотр в конструкторе. */
+  previewStep?: string;
   showTitle?: boolean;
   apiDictLoader?: (dictId: string, values: Record<string, any>) => Promise<{ code: string; label: string; attrs?: any }[]>;
   suggestLoader?: (field: Field, query: string, values: Record<string, any>) => Promise<SuggestItem[]>;
@@ -68,13 +80,20 @@ type DictItem = { code: string; label: string; attrs?: any };
 type SuggestItem = { value: string; label: string; data: any };
 
 const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
-  { schema, dictionaries, initialValues, onSubmit, onChange, onError, showTitle = true, apiDictLoader, suggestLoader, fileUpload },
+  { schema, dictionaries, initialValues, onSubmit, onChange, onError, onOutcome, previewStep, showTitle = true, apiDictLoader, suggestLoader, fileUpload },
   ref,
 ) {
   const [values, setValues] = useState<Record<string, any>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
-  const [done, setDone] = useState<string | null>(null);
+  const [done, setDone] = useState<ResolvedOutcome | null>(null);
+  // Флоу: активный шаг + уже пройденные (их значения продолжают уезжать на
+  // бэкенд, иначе второй запрос потерял бы данные первого экрана).
+  const steps = useMemo(() => flowSteps(schema.submit), [schema.submit]);
+  const [stepId, setStepId] = useState<string>(steps[0]?.id || MAIN_STEP);
+  const [visited, setVisited] = useState<string[]>([steps[0]?.id || MAIN_STEP]);
+  // Продолжение многошаговой формы: id заполнения + подпись с прошлого шага.
+  const flowRef = useRef<{ submissionId?: string; flowToken?: string }>({});
   const [apiOptions, setApiOptions] = useState<Record<string, DictItem[]>>({});
   const [apiLoading, setApiLoading] = useState<Record<string, boolean>>({});
   const apiKeys = useRef<Record<string, string>>({});
@@ -121,6 +140,15 @@ const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
   // Seed from the host BEFORE defaults, so a value the process already holds is
   // not overwritten by the field's default. Keyed on the serialised payload so a
   // re-render never wipes what the user has typed since.
+  // Конструктор переключает шаги руками, чтобы посмотреть второй экран без
+  // реального обращения к внешней системе.
+  useEffect(() => {
+    if (!previewStep) return;
+    setStepId(previewStep);
+    setVisited((v) => (v.includes(previewStep) ? v : [...v, previewStep]));
+    setDone(null);
+  }, [previewStep]);
+
   const seeded = useRef<string | null>(null);
   useEffect(() => {
     if (!initialValues) return;
@@ -209,6 +237,8 @@ const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
   };
 
   const isVisible = (f: Field) => !hiddenBySameAs.has(f.id) && evalCondition(f.visibleIf, computed);
+  /** Показывается прямо сейчас: и шаг активный, и условие видимости выполнено. */
+  const isShown = (f: Field) => fieldStep(f) === stepId && isVisible(f);
   const isRequired = (f: Field) => !!f.required || (!!f.requiredIf && evalCondition(f.requiredIf, computed));
 
   function validateField(f: Field): string {
@@ -236,14 +266,49 @@ const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
     return '';
   }
 
+  // Валидируется только активный шаг: поля следующего экрана ещё не показаны,
+  // требовать их заполнения было бы тупиком.
   function runValidation(): Record<string, string> {
     const errs: Record<string, string> = {};
     for (const f of schema.fields) {
-      if (LAYOUT.includes(f.type) || !isVisible(f)) continue;
+      if (LAYOUT.includes(f.type) || !isShown(f)) continue;
       const e = validateField(f);
       if (e) errs[f.id] = e;
     }
     return errs;
+  }
+
+  /** Исход, посчитанный бэкендом: сообщение, следующий шаг или переход. */
+  function applyOutcome(outcome: ResolvedOutcome) {
+    onOutcome?.(outcome, stepId);
+    if (outcome.kind === 'redirect' && outcome.url) {
+      const go = () => {
+        if (outcome.newTab) window.open(outcome.url, '_blank', 'noopener');
+        else window.location.href = outcome.url!;
+      };
+      if (outcome.delayMs) {
+        setDone({ kind: 'message', messageType: 'success', text: outcome.title || 'Переходим…' });
+        setTimeout(go, outcome.delayMs);
+      } else go();
+      return;
+    }
+    if (outcome.kind === 'fields' && outcome.stepId) {
+      // Значения из ответа (одобренный лимит, номер заявки) подставляются в
+      // поля нового шага до того, как пользователь его увидит.
+      if (outcome.values && Object.keys(outcome.values).length) {
+        setValues((prev) => ({ ...prev, ...outcome.values }));
+      }
+      setVisited((v) => (v.includes(outcome.stepId!) ? v : [...v, outcome.stepId!]));
+      setStepId(outcome.stepId);
+      setErrors({});
+      setDone(null);
+      return;
+    }
+    if (outcome.kind === 'none') {
+      setDone(null);
+      return;
+    }
+    setDone({ ...outcome, kind: 'message' });
   }
 
   async function handleSubmit() {
@@ -260,14 +325,18 @@ const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
     }
     setSubmitting(true);
     try {
+      // Уходят значения всех пройденных шагов: второму запросу почти всегда
+      // нужны данные первого (сумма, ФИО), а не только что-то с текущего экрана.
       const payload: Record<string, any> = {};
       for (const f of schema.fields) {
-        if (LAYOUT.includes(f.type) || !isVisible(f)) continue;
+        if (LAYOUT.includes(f.type) || !visited.includes(fieldStep(f)) || !isVisible(f)) continue;
         payload[f.id] = computed[f.id];
       }
-      const res = await onSubmit(payload);
-      if (res.redirectUrl) window.location.href = res.redirectUrl;
-      else setDone(res.successMessage || 'Спасибо!');
+      const res = await onSubmit(payload, stepId, flowRef.current);
+      flowRef.current = { submissionId: res?.submissionId, flowToken: res?.flowToken };
+      if (res?.outcome) applyOutcome(res.outcome);
+      else if (res?.redirectUrl) window.location.href = res.redirectUrl;
+      else setDone({ kind: 'message', messageType: 'success', text: res?.successMessage || 'Спасибо!' });
     } catch (e: any) {
       message.error('Ошибка отправки: ' + (e?.message || 'unknown'));
     } finally {
@@ -287,31 +356,60 @@ const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
       setValues({});
       setErrors({});
       setDone(null);
+      setStepId(steps[0]?.id || MAIN_STEP);
+      setVisited([steps[0]?.id || MAIN_STEP]);
+      flowRef.current = {};
       apiKeys.current = {};
     },
     submit: handleSubmit,
+    goToStep: (id: string) => {
+      setStepId(id);
+      setVisited((v) => (v.includes(id) ? v : [...v, id]));
+      setDone(null);
+    },
   }));
 
-  if (done) return <Alert type="success" showIcon message={done} style={{ margin: 8 }} />;
+  if (done) {
+    return (
+      <Alert
+        type={done.messageType || 'success'}
+        showIcon
+        message={done.title || done.text || 'Спасибо!'}
+        description={done.title && done.text ? done.text : undefined}
+        style={{ margin: 8 }}
+      />
+    );
+  }
 
+  const step = findStep(steps, stepId);
+  const button = normalizeButton(step.button);
   const cols = schema.grid_columns || 2;
   const useLayout = schema.fields.some((f) => f.layout);
   // Compact original row indices so hidden fields don't leave holes, while
   // keeping horizontal (x/w) placement exactly as designed.
   const rowMap = new Map<number, number>();
   if (useLayout) {
-    const ys = Array.from(new Set(schema.fields.filter(isVisible).map((f) => f.layout?.y ?? 0))).sort((a, b) => a - b);
+    const ys = Array.from(new Set(schema.fields.filter(isShown).map((f) => f.layout?.y ?? 0))).sort((a, b) => a - b);
     ys.forEach((y, i) => rowMap.set(y, i + 1));
   }
 
   const maxWidth = useLayout ? 980 : 760;
+  const justify = button.align === 'left' ? 'flex-start' : button.align === 'right' ? 'flex-end' : 'center';
 
   return (
     <div style={{ maxWidth, margin: '0 auto', padding: 8 }}>
       {showTitle && <Title level={3}>{schema.title}</Title>}
+      {/* Заголовок шага показывается только у продолжений — на первом экране
+          его роль играет заголовок формы, и дублировать его незачем. */}
+      {stepId !== (steps[0]?.id || MAIN_STEP) && (step.title || step.description) && (
+        <div style={{ marginBottom: 12 }}>
+          {step.title && <Title level={4} style={{ marginBottom: 4 }}>{step.title}</Title>}
+          {step.description && <Paragraph type="secondary" style={{ marginBottom: 0 }}>{step.description}</Paragraph>}
+        </div>
+      )}
       <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, 1fr)`, alignItems: 'start', gap: 16 }}>
         {schema.fields.map((f) => {
-          if (!isVisible(f)) return null;
+          if (!isShown(f)) return null;
           let style: React.CSSProperties;
           if (useLayout && f.layout) {
             const x = Math.min(Math.max(f.layout.x, 0), cols - 1);
@@ -329,9 +427,18 @@ const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
           );
         })}
       </div>
-      <Button type="primary" size="large" onClick={handleSubmit} loading={submitting} style={{ marginTop: 20 }} block>
-        Отправить
-      </Button>
+      <div style={{ display: 'flex', justifyContent: justify, marginTop: 20 }}>
+        <Button
+          type="primary"
+          size={button.size}
+          danger={button.danger}
+          block={button.block}
+          onClick={handleSubmit}
+          loading={submitting}
+        >
+          {submitting && button.loadingText ? button.loadingText : button.text}
+        </Button>
+      </div>
     </div>
   );
 

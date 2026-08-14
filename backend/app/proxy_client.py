@@ -76,3 +76,67 @@ async def run_proxy_request(
     resp.raise_for_status()
     ctype = resp.headers.get("content-type", "")
     return resp.json() if "json" in ctype else {"text": resp.text}
+
+
+async def run_connection_request(
+    db: AsyncSession,
+    connection_id: str | None,
+    endpoint: str,
+    method: str = "POST",
+    body: object | None = None,
+    headers: dict[str, str] | None = None,
+    params: dict[str, str] | None = None,
+) -> dict:
+    """Запрос через «Подключение», возвращающий СЫРОЙ результат.
+
+    В отличие от `run_proxy_request` не бросает исключение на 4xx/5xx: весь
+    смысл правил разбора ответа — ветвиться по коду («409 — заявка уже подана»),
+    а проглоченный статус сделал бы такое правило невыразимым.
+
+    Возвращает `{"status", "body", "error", "url"}`; `error` заполнен только
+    когда ответа не было вовсе (таймаут, DNS, обрыв).
+    """
+    if not connection_id:
+        raise HTTPException(400, "выберите подключение для REST-отправки")
+    conn = await db.get(Connection, connection_id)
+    if not conn:
+        raise HTTPException(404, "connection not found")
+
+    _check_whitelist(endpoint, conn.whitelist)
+
+    url = conn.base_url.rstrip("/") + "/" + (endpoint or "").lstrip("/")
+    out_headers: dict[str, str] = dict(headers or {})
+    query: dict[str, str] = dict(params or {})
+    # Аутентификация подключения ставится ПОСЛЕ пользовательских заголовков:
+    # заголовок из настроек шага не должен подменить секрет подключения.
+    _apply_auth(conn, out_headers, query)
+
+    # Параметры ДОПИСЫВАЮТСЯ к строке запроса, а не подменяют её: httpx с
+    # аргументом `params=` затирает query из URL целиком, и `/decision?limit=100`,
+    # набранный в конструкторе, уехал бы без limit — молча и без следов в логе.
+    target = httpx.URL(url)
+    if query:
+        target = target.copy_merge_params(query)
+
+    method = (method or "POST").upper()
+    timeout = (conn.timeout or 5000) / 1000
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.request(
+                method,
+                target,
+                headers=out_headers,
+                json=None if method == "GET" else body,
+            )
+    except Exception as exc:  # noqa: BLE001 — сеть отдаём правилам как error
+        return {"status": 0, "body": None, "error": str(exc)[:300], "url": url}
+
+    ctype = resp.headers.get("content-type", "")
+    if "json" in ctype:
+        try:
+            parsed = resp.json()
+        except ValueError:
+            parsed = {"text": resp.text[:2000]}
+    else:
+        parsed = {"text": resp.text[:2000]}
+    return {"status": resp.status_code, "body": parsed, "error": None, "url": url}

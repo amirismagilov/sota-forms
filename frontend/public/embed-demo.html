@@ -35,6 +35,28 @@
 
     <div class="log" id="log">События: —</div>
 
+    <hr style="margin: 40px 0; border: none; border-top: 1px solid #eee" />
+
+    <header>
+      <h1>Многошаговый флоу</h1>
+      <p>
+        Та же одна строка разметки, но форма ветвится по ответу внешней системы:
+        заявка уходит в систему принятия решения, и дальше <b>она</b> решает, что показать.
+        Страница про это ничего не знает — только слушает события.
+      </p>
+      <p>
+        Сумма больше 12 доходов — отказ (сообщение). Больше 500 000 — ручная проверка.
+        Иначе одобрение и <b>второй шаг с новыми полями</b>, где одобренная сумма уже подставлена.
+      </p>
+      <pre><code>&lt;no-code-form form-id="credit_application"&gt;&lt;/no-code-form&gt;</code></pre>
+    </header>
+
+    <div class="frame">
+      <no-code-form id="credit" form-id="credit_application"></no-code-form>
+    </div>
+
+    <div class="log" id="flowlog">Исход: —</div>
+
     <script src="/form-widget.js"></script>
     <script>
       const log = document.getElementById('log');
@@ -43,6 +65,15 @@
         wc.addEventListener(ev, (e) => {
           log.textContent = `Событие ${ev}: ` + JSON.stringify(e.detail);
         });
+      });
+
+      const flowlog = document.getElementById('flowlog');
+      const credit = document.getElementById('credit');
+      credit.addEventListener('form:outcome', (e) => {
+        flowlog.textContent = 'Исход: ' + JSON.stringify(e.detail.outcome);
+      });
+      credit.addEventListener('form:step', (e) => {
+        flowlog.textContent = `Перешли на шаг «${e.detail.step}» (с «${e.detail.from}»)`;
       });
     </script>
   </body>

@@ -72,3 +72,22 @@ def sign_payload(payload: dict) -> str:
     secret = get_settings().webhook_hmac_secret.encode()
     body = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()
     return "sha256=" + hmac.new(secret, body, hashlib.sha256).hexdigest()
+
+
+def sign_flow_token(submission_id: str, form_id: str) -> str:
+    """Пропуск на следующий шаг многошаговой формы.
+
+    Второй шаг дописывает данные в УЖЕ существующее заполнение, а submit —
+    публичный эндпоинт. Без подписи чужой submissionId (48 бит, перебираемо)
+    позволил бы дописать что угодно в чужую заявку, поэтому идентификатор
+    возвращается только вместе с этим токеном и принимается только с ним.
+    """
+    secret = get_settings().webhook_hmac_secret.encode()
+    body = f"{form_id}:{submission_id}".encode()
+    return hmac.new(secret, body, hashlib.sha256).hexdigest()
+
+
+def verify_flow_token(token: str | None, submission_id: str, form_id: str) -> bool:
+    if not token:
+        return False
+    return hmac.compare_digest(token, sign_flow_token(submission_id, form_id))
