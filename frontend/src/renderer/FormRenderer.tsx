@@ -399,9 +399,12 @@ const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
   return (
     <div style={{ maxWidth, margin: '0 auto', padding: 8 }}>
       {showTitle && <Title level={3}>{schema.title}</Title>}
-      {/* Заголовок шага показывается только у продолжений — на первом экране
-          его роль играет заголовок формы, и дублировать его незачем. */}
-      {stepId !== (steps[0]?.id || MAIN_STEP) && (step.title || step.description) && (
+      {/* Заголовок и подпись шага показываются на КАЖДОМ экране, включая первый:
+          автор, который их заполнил, ожидает увидеть их в форме. Раньше первый
+          экран был исключением (считалось, что его роль играет заголовок формы),
+          но в конструкторе заголовок формы скрыт (showTitle=false), и текст
+          просто пропадал. Не нужен на первом экране — оставьте поля пустыми. */}
+      {(step.title || step.description) && (
         <div style={{ marginBottom: 12 }}>
           {step.title && <Title level={4} style={{ marginBottom: 4 }}>{step.title}</Title>}
           {step.description && <Paragraph type="secondary" style={{ marginBottom: 0 }}>{step.description}</Paragraph>}
