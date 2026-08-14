@@ -759,17 +759,17 @@ function StepSection({
       title={
         <Space wrap size={6}>
           <Tag color={isFirst ? 'blue' : 'purple'}>{index + 1}</Tag>
-          {single ? (
-            <Typography.Text strong>Поля формы</Typography.Text>
-          ) : (
-            <Input
-              variant="borderless"
-              value={step.title}
-              placeholder={isFirst ? 'Первый шаг' : `Шаг ${index + 1}`}
-              onChange={(e) => onPatch({ title: e.target.value })}
-              style={{ fontWeight: 600, width: 200 }}
-            />
-          )}
+          {/* Заголовок и подпись правятся всегда, даже у формы из одного шага:
+              они рендерятся на экране, а редактируемое поле — единственное
+              место, где автор их видит. Спрячешь ввод — и текст, оставшийся
+              от удалённого шага, будет показываться неизвестно откуда. */}
+          <Input
+            variant="borderless"
+            value={step.title}
+            placeholder={single ? 'Поля формы' : isFirst ? 'Первый шаг' : `Шаг ${index + 1}`}
+            onChange={(e) => onPatch({ title: e.target.value })}
+            style={{ fontWeight: 600, width: 200 }}
+          />
           <Tag>{mine.length} полей</Tag>
         </Space>
       }
@@ -786,15 +786,13 @@ function StepSection({
         </Space>
       }
     >
-      {!single && (
-        <Input
-          variant="borderless"
-          value={step.description}
-          placeholder="Подпись под заголовком шага (необязательно)"
-          onChange={(e) => onPatch({ description: e.target.value })}
-          style={{ padding: 0, marginBottom: 8, fontSize: 12, color: '#888' }}
-        />
-      )}
+      <Input
+        variant="borderless"
+        value={step.description}
+        placeholder="Подпись под заголовком экрана (необязательно)"
+        onChange={(e) => onPatch({ description: e.target.value })}
+        style={{ padding: 0, marginBottom: 8, fontSize: 12, color: '#888' }}
+      />
 
       {mine.map((f) => (
         <FieldRow
