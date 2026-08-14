@@ -183,7 +183,6 @@ export interface SubmitButton {
   size?: 'small' | 'middle' | 'large';
   block?: boolean;
   align?: 'left' | 'center' | 'right';
-  danger?: boolean;
 }
 
 export type Transport = 'none' | 'webhook' | 'rest';

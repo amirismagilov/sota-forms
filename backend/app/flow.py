@@ -157,7 +157,6 @@ def _button(cfg: dict | None) -> dict:
         "size": cfg.get("size") if cfg.get("size") in ("small", "middle", "large") else "large",
         "block": True if cfg.get("block") is None else bool(cfg.get("block")),
         "align": cfg.get("align") if cfg.get("align") in ("left", "center", "right") else "center",
-        "danger": bool(cfg.get("danger")),
     }
 
 

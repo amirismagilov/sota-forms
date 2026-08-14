@@ -17,7 +17,6 @@ export function normalizeButton(cfg: SubmitButton | undefined): Required<SubmitB
     size: cfg?.size || 'large',
     block: cfg?.block === undefined ? true : !!cfg.block,
     align: cfg?.align || 'center',
-    danger: !!cfg?.danger,
   };
 }
 

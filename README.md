@@ -77,7 +77,9 @@ docker compose up --build
 `?limit=100` (сумма одобрения) и `?decision=approved|declined|manual`
 для прогона конкретной ветки.
 
-Подробно — [`docs/form-flow.md`](docs/form-flow.md).
+Подробно — [`docs/form-flow.md`](docs/form-flow.md). На уже работающем стенде
+демо-форму заводит `python3 scripts/create-credit-demo.py` (сид наполняет базу
+только при первом запуске и существующие данные не трогает).
 
 ### Справочники
 - **Ручные** — код + label + parentValue (каскады) + произвольные атрибуты.
