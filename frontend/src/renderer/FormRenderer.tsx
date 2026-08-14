@@ -554,7 +554,9 @@ const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
         return wrap(f, <Input.TextArea rows={f.rows || 3} placeholder={f.placeholder || ''} value={v} readOnly={f.readOnly} onChange={(e) => setValue(f, e.target.value)} />);
       case 'number':
       case 'amount':
-        return wrap(f, <InputNumber style={{ width: '100%' }} value={v} readOnly={f.readOnly} min={f.validation?.min} max={f.validation?.max} step={f.validation?.step} onChange={(x) => setValue(f, x)} addonAfter={f.type === 'amount' ? '₽' : undefined} />);
+        // Спиннер ▲▼ скрыт: суммы вводят с клавиатуры, а стрелки ломают
+        // вертикальный ритм поля с плавающей меткой.
+        return wrap(f, <InputNumber controls={false} style={{ width: '100%' }} value={v} readOnly={f.readOnly} min={f.validation?.min} max={f.validation?.max} step={f.validation?.step} onChange={(x) => setValue(f, x)} addonAfter={f.type === 'amount' ? '₽' : undefined} />);
       case 'calculated': {
         const num = Number(computed[f.id] || 0);
         const text = `${f.calcPrefix || ''}${num.toFixed(f.calcDecimals ?? 2)}${f.calcSuffix || ''}`;
