@@ -172,27 +172,60 @@ function ExchangeCard({ x }: { x: Exchange }) {
       </Turn>
 
       <Turn
-        tone={x.error ? 'error' : 'in'}
-        title={x.error
-          ? 'Ответа не было'
-          : `Система ответила${resp?.status ? ` · HTTP ${resp.status}` : ''}`}
+        tone={x.error || resp?.error || (resp?.status >= 400) ? 'error' : 'in'}
+        title={x.error ? 'Ответа не было' : replyTitle(resp, o.transport)}
       >
         {x.error
           ? <Alert type="error" showIcon message={x.error} />
-          : resp
-            ? <Code>{JSON.stringify(resp.body, null, 2)}</Code>
-            : (
-              // Не молчим о том, почему тела ответа нет: без этого выглядит как баг.
-              <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 0 }}>
-                Сырое тело не показано — оно разбирается на сервере и в браузер не уходит.
-                Включить: «Флоу отправки» → блок 3 → <b>Отдавать сырой ответ</b>.
-              </Typography.Paragraph>
-            )}
+          : <ResponseBody resp={resp} transport={o.transport} />}
 
-        {!x.error && <Derived outcome={o} matchedRule={x.matchedRule} hasBody={!!resp} />}
+        {!x.error && <Derived outcome={o} matchedRule={x.matchedRule} hasBody={hasRawBody(resp)} />}
       </Turn>
     </Card>
   );
+}
+
+const hasRawBody = (resp: any) => resp?.body !== undefined;
+
+/**
+ * Заголовок ответной реплики. HTTP-статус показываем всегда, когда обмен был —
+ * он приходит независимо от того, отдаёт автор сырое тело или нет. «Ответа нет»
+ * бывает по двум разным причинам, и путать их нельзя: ответа не ждали
+ * (асинхронная доставка) — это не то же самое, что система не ответила.
+ */
+function replyTitle(resp: any, transport?: string): string {
+  if (resp?.status) return `Система ответила · HTTP ${resp.status}`;
+  if (resp?.error) return 'Система не ответила';
+  if (!resp) return transport === 'webhook' ? 'Ответа не ждали' : 'Вызова не было';
+  return 'Система ответила';
+}
+
+/**
+ * Тело ответа — или честное объяснение, почему его здесь нет.
+ *
+ * Причин ровно три, и путать их нельзя: тело скрыто настройкой автора, вызова
+ * вообще не было (шаг ушёл в очередь доставки), связи не было. HTTP-статус к
+ * этому не относится — он приходит всегда и стоит в заголовке реплики.
+ */
+function ResponseBody({ resp, transport }: { resp: any; transport?: string }) {
+  const note = (children: React.ReactNode) => (
+    <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 0 }}>
+      {children}
+    </Typography.Paragraph>
+  );
+
+  if (resp?.error) return <Alert type="error" showIcon message={resp.error} />;
+  if (hasRawBody(resp)) return <Code>{JSON.stringify(resp.body, null, 2)}</Code>;
+  if (resp) {
+    return note(<>
+      Сырое тело не показано — оно разбирается на сервере и в браузер не уходит.
+      Включить: «Флоу отправки» → блок 3 → <b>Отдавать сырой ответ</b>.
+    </>);
+  }
+  if (transport === 'webhook') {
+    return note(<>Шаг поставлен в очередь доставки на вебхук — он придёт в карточку ниже, через воркер.</>);
+  }
+  return note(<>У шага не настроена отправка — во внешнюю систему ничего не уходило.</>);
 }
 
 /** Что сервер вывел из ответа — это и есть содержательная часть реплики. */

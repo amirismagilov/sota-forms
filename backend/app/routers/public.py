@@ -299,9 +299,18 @@ async def submit_form(form_id: str, body: SubmitIn, db: AsyncSession = Depends(g
 
     outcome, rule = run_rules(step, ctx)
     outcome = _finalize_outcome(outcome, flow, snap, step)
-    if request.get("exposeResponse"):
-        # Сырой ответ уезжает в браузер только по явной галочке автора.
-        outcome["response"] = {"status": status, "body": resp_body}
+    # Факт обмена возвращаем всегда: каким транспортом ушло, с каким HTTP-статусом
+    # (или почему ответа не было). Это не секрет — секрет в теле ответа, и оно
+    # по-прежнему уезжает в браузер только по явной галочке автора. Пока статус
+    # прятался вместе с телом, успешный REST-вызов выглядел так, будто его не было.
+    outcome["transport"] = transport or "none"
+    expose_body = bool(request.get("exposeResponse"))
+    if status is not None or error or expose_body:
+        outcome["response"] = {"status": status}
+        if error:
+            outcome["response"]["error"] = error
+        if expose_body:
+            outcome["response"]["body"] = resp_body
 
     await db.commit()
     await db.refresh(sub)

@@ -466,16 +466,65 @@ async def test_author_can_take_over_failure_handling(client, decision_api):
     assert r.status_code == 200, r.text
     assert r.json()["outcome"]["text"] == "Сервис недоступен, мы перезвоним"
     assert r.json()["outcome"]["messageType"] == "warning"
+    # Автор скрыл провал за мягким текстом — но факт обмена виден: HTTP 404.
+    assert r.json()["outcome"]["response"]["status"] == 404
+    assert "body" not in r.json()["outcome"]["response"]
+
+
+async def test_async_webhook_step_reports_no_response_at_all(client, decision_api):
+    """У шага с очередью доставки ответа нет — и мы не притворяемся, что он был.
+
+    Транспорт при этом назван честно: «ответа нет, потому что вебхук асинхронный»
+    и «ответа нет, потому что отправка не настроена» — разные вещи.
+    """
+    queued = dict(CREDIT_SUBMIT)
+    queued["steps"] = [
+        CREDIT_SUBMIT["steps"][0],
+        {
+            **CREDIT_SUBMIT["steps"][1],
+            "request": {
+                "transport": "webhook",
+                "webhookUrl": "http://backend:8000/api/mock/webhook",
+                "delivery": "async",
+            },
+        },
+    ]
+    await _publish_credit_form(client, "flow_credit_async", submit=queued)
+    first = await client.post(
+        "/api/public/forms/flow_credit_async/submit",
+        json={"data": {"amount": 200000, "income": 100000}},
+    )
+    assert first.json()["outcome"]["response"] == {"status": 200}
+    second = await client.post(
+        "/api/public/forms/flow_credit_async/submit",
+        json={
+            "data": {"passport": "4509 123456"},
+            "step": "approved",
+            "submissionId": first.json()["submissionId"],
+            "flowToken": first.json()["flowToken"],
+        },
+    )
+    assert second.status_code == 200, second.text
+    outcome = second.json()["outcome"]
+    assert outcome["transport"] == "webhook"
+    assert "response" not in outcome
 
 
 async def test_raw_response_is_hidden_unless_author_opts_in(client, decision_api):
-    """Тело ответа скоринга не утекает в браузер по умолчанию."""
+    """Тело ответа скоринга не утекает в браузер по умолчанию — но статус уходит.
+
+    Скрывать вместе с телом ещё и HTTP-статус нельзя: тогда успешный вызов
+    внешней системы неотличим от «никуда не ходили», и встраивание выглядит
+    сломанным ровно там, где всё сработало.
+    """
     await _publish_credit_form(client, "flow_credit_private")
     r = await client.post(
         "/api/public/forms/flow_credit_private/submit",
         json={"data": {"amount": 200000, "income": 100000}},
     )
-    assert "response" not in r.json()["outcome"]
+    outcome = r.json()["outcome"]
+    assert outcome["transport"] == "rest"
+    assert outcome["response"] == {"status": 200}
     assert "requestId" not in r.text
 
     opened = dict(CREDIT_SUBMIT)
