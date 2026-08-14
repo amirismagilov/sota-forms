@@ -145,7 +145,8 @@ class NoCodeForm extends HTMLElement {
           })
         ).data;
         this.emit('form:completed', {
-          data: payload, context, step, submissionId: res.submissionId, outcome: res.outcome,
+          data: payload, context, step, submissionId: res.submissionId,
+          outcome: res.outcome, matchedRule: res.matchedRule,
         });
         return res;
       } catch (e: any) {

@@ -5,10 +5,10 @@ import {
 } from 'antd';
 import { useState } from 'react';
 import { testFlow } from '../api';
-import { MAIN_STEP } from '../renderer/flow';
+import { editorSteps, MAIN_STEP, writeSteps } from '../renderer/flow';
 import type {
   Connection, Field, FlowStep, FlowTestResult, OutcomeAction, ResponseRule,
-  RuleCondition, StepRequest, SubmitButton, SubmitConfig,
+  RuleCondition, StepRequest, SubmitConfig,
 } from '../types';
 
 const { Text, Paragraph } = Typography;
@@ -50,67 +50,24 @@ interface Props {
 }
 
 /**
- * Настройка флоу отправки: кнопка → куда слать JSON → как разобрать ответ →
- * что показать. Каждый шаг — самостоятельная связка из этих четырёх блоков,
- * поэтому «одобрено → добери ещё 3 поля → отправь уже в CRM» настраивается
- * тем же самым редактором, что и первый экран.
+ * ПОВЕДЕНИЕ шага: куда уходит JSON и что происходит после ответа.
+ *
+ * Структура — какие вообще есть шаги и какие поля на каждом — намеренно живёт
+ * во вкладке «Поля», рядом с самими полями. Здесь настраивается только то, чего
+ * в полях не видно: запрос наружу и правила перехода по его ответу.
  */
 export default function FlowEditor({
   submit, fields, connections, formPk, previewStep, onPreviewStep, onChange,
 }: Props) {
-  const steps: FlowStep[] = submit.steps?.length
-    ? submit.steps
-    : [{
-      id: MAIN_STEP,
-      button: { text: 'Отправить' },
-      request: submit.webhookUrl
-        ? { transport: 'webhook', webhookUrl: submit.webhookUrl }
-        : { transport: 'none' },
-      rules: [{
-        id: 'default',
-        name: 'По умолчанию',
-        when: [],
-        then: submit.redirectUrl
-          ? { kind: 'redirect', url: submit.redirectUrl }
-          : { kind: 'message', messageType: 'success', text: submit.successMessage || 'Спасибо!' },
-      }],
-    }];
-
+  // Шаги приходят из вкладки «Поля» — здесь они только читаются. Добавление,
+  // переименование и удаление шага живут там же, где видно их поля: держать
+  // две точки управления одной сущностью — верный способ развести их состояния.
+  const steps: FlowStep[] = editorSteps(submit);
   const [active, setActive] = useState<string>(steps[0]?.id || MAIN_STEP);
   const step = steps.find((s) => s.id === active) || steps[0];
 
-  function writeSteps(next: FlowStep[]) {
-    // Legacy-ключи стираются при первом же сохранении флоу: держать две
-    // конфигурации одновременно — верный способ отправить не туда.
-    const { webhookUrl, successMessage, redirectUrl, ...rest } = submit;
-    void webhookUrl; void successMessage; void redirectUrl;
-    onChange({ ...rest, steps: next });
-  }
-
   const patchStep = (id: string, patch: Partial<FlowStep>) =>
-    writeSteps(steps.map((s) => (s.id === id ? { ...s, ...patch } : s)));
-
-  function addStep() {
-    const id = newId('step');
-    writeSteps([...steps, {
-      id,
-      title: 'Новый шаг',
-      description: '',
-      button: { text: 'Отправить' },
-      request: { transport: 'none' },
-      rules: [{ id: newId('rule'), name: 'Готово', when: [], then: { kind: 'message', messageType: 'success', text: 'Спасибо!' } }],
-    }]);
-    setActive(id);
-    onPreviewStep(id);
-  }
-
-  function removeStep(id: string) {
-    writeSteps(steps.filter((s) => s.id !== id));
-    setActive(MAIN_STEP);
-    onPreviewStep(MAIN_STEP);
-  }
-
-  const stepFields = (id: string) => fields.filter((f) => (f.step || MAIN_STEP) === id);
+    onChange(writeSteps(submit, steps.map((s) => (s.id === id ? { ...s, ...patch } : s))));
 
   return (
     <div>
@@ -118,72 +75,37 @@ export default function FlowEditor({
         type="info"
         showIcon
         style={{ marginBottom: 12 }}
-        message="Как это работает"
+        message="Поведение шага"
         description={
           <span style={{ fontSize: 12 }}>
-            Шаг = <b>поля</b> + <b>кнопка</b> + <b>куда уходит JSON</b> + <b>правила разбора ответа</b>.
-            Правило может показать сообщение, открыть следующий шаг с новыми полями или увести по ссылке.
-            Условия считаются на сервере — тело ответа не попадает в браузер, пока вы сами не разрешите.
+            Здесь настраивается, <b>куда уходит JSON</b> этого шага и <b>что происходит после ответа</b>:
+            показать сообщение, открыть следующий шаг с новыми полями или увести по ссылке.
+            Сами шаги и их поля — на вкладке «Поля». Условия считаются на сервере,
+            тело ответа не попадает в браузер, пока вы сами не разрешите.
           </span>
         }
       />
 
-      <Space wrap style={{ marginBottom: 12 }}>
-        <Segmented
-          value={active}
-          onChange={(v) => { setActive(String(v)); onPreviewStep(String(v)); }}
-          options={steps.map((s) => ({
-            label: `${s.id === MAIN_STEP ? '1. ' : ''}${s.title || (s.id === MAIN_STEP ? 'Первый шаг' : s.id)} · ${stepFields(s.id).length} полей`,
-            value: s.id,
-          }))}
-        />
-        <Button size="small" icon={<PlusOutlined />} onClick={addStep}>Шаг</Button>
-        {step && step.id !== MAIN_STEP && (
-          <Button size="small" danger icon={<DeleteOutlined />} onClick={() => removeStep(step.id)}>
-            Удалить шаг
-          </Button>
-        )}
-      </Space>
-
-      {!stepFields(step.id).length && (
-        <Alert
-          type="warning" showIcon style={{ marginBottom: 12 }}
-          message="На этом шаге пока нет полей"
-          description={<span style={{ fontSize: 12 }}>Откройте вкладку «Поля», отредактируйте поле и выберите ему шаг «{step.title || step.id}».</span>}
-        />
-      )}
-
-      {step.id !== MAIN_STEP && (
-        <Row gutter={12} style={{ marginBottom: 8 }}>
-          <Col span={10}>
-            <AntForm layout="vertical">
-              <AntForm.Item label="Название шага" style={{ marginBottom: 8 }}>
-                <Input value={step.title} onChange={(e) => patchStep(step.id, { title: e.target.value })} />
-              </AntForm.Item>
-            </AntForm>
-          </Col>
-          <Col span={14}>
-            <AntForm layout="vertical">
-              <AntForm.Item label="Подпись под названием" style={{ marginBottom: 8 }}>
-                <Input value={step.description} placeholder="Кредит одобрен — заполните данные для зачисления"
-                  onChange={(e) => patchStep(step.id, { description: e.target.value })} />
-              </AntForm.Item>
-            </AntForm>
-          </Col>
-        </Row>
+      {steps.length > 1 && (
+        <Space wrap style={{ marginBottom: 12 }}>
+          <Text type="secondary" style={{ fontSize: 12 }}>Настраиваем шаг:</Text>
+          <Segmented
+            value={active}
+            onChange={(v) => { setActive(String(v)); onPreviewStep(String(v)); }}
+            options={steps.map((s, i) => ({
+              label: `${i + 1}. ${s.title || (i === 0 ? 'Первый шаг' : s.id)}`,
+              value: s.id,
+            }))}
+          />
+        </Space>
       )}
 
       <Collapse
-        defaultActiveKey={['btn', 'req', 'rules']}
+        defaultActiveKey={['req', 'rules']}
         items={[
           {
-            key: 'btn',
-            label: <b>2 · Кнопка отправки</b>,
-            children: <ButtonBlock value={step.button} onChange={(button) => patchStep(step.id, { button })} />,
-          },
-          {
             key: 'req',
-            label: <b>3 · Куда отправить JSON с полями</b>,
+            label: <b>1 · Куда отправить JSON с полями</b>,
             children: (
               <RequestBlock
                 value={step.request}
@@ -195,7 +117,7 @@ export default function FlowEditor({
           },
           {
             key: 'rules',
-            label: <b>4–5 · Разбор ответа и что показать</b>,
+            label: <b>2 · Разбор ответа и переход дальше</b>,
             children: (
               <RulesBlock
                 rules={step.rules || []}
@@ -218,54 +140,7 @@ export default function FlowEditor({
   );
 }
 
-// ---------------------------------------------------------------- 2. Кнопка
-function ButtonBlock({ value, onChange }: { value?: SubmitButton; onChange: (v: SubmitButton) => void }) {
-  const v = value || {};
-  const patch = (p: Partial<SubmitButton>) => onChange({ ...v, ...p });
-  return (
-    <AntForm layout="vertical">
-      <Row gutter={12}>
-        <Col span={10}>
-          <AntForm.Item label="Текст кнопки" style={{ marginBottom: 8 }}>
-            <Input value={v.text} placeholder="Отправить" onChange={(e) => patch({ text: e.target.value })} />
-          </AntForm.Item>
-        </Col>
-        <Col span={8}>
-          <AntForm.Item label="Текст во время отправки" style={{ marginBottom: 8 }}
-            tooltip="Показывается, пока идёт запрос. Пусто — останется основной текст.">
-            <Input value={v.loadingText} placeholder="Проверяем…" onChange={(e) => patch({ loadingText: e.target.value })} />
-          </AntForm.Item>
-        </Col>
-        <Col span={6}>
-          <AntForm.Item label="Размер" style={{ marginBottom: 8 }}>
-            <Select
-              value={v.size || 'large'}
-              onChange={(size) => patch({ size })}
-              options={[{ label: 'Крупная', value: 'large' }, { label: 'Обычная', value: 'middle' }, { label: 'Мелкая', value: 'small' }]}
-            />
-          </AntForm.Item>
-        </Col>
-      </Row>
-      <Space size={24} wrap>
-        <span>
-          <Switch size="small" checked={v.block === undefined ? true : v.block} onChange={(block) => patch({ block })} />
-          <Text style={{ marginLeft: 8 }}>Во всю ширину</Text>
-        </span>
-        <span>
-          <Text type="secondary" style={{ marginRight: 8 }}>Выравнивание</Text>
-          <Segmented
-            size="small"
-            value={v.align || 'center'}
-            onChange={(align) => patch({ align: align as SubmitButton['align'] })}
-            options={[{ label: 'Слева', value: 'left' }, { label: 'По центру', value: 'center' }, { label: 'Справа', value: 'right' }]}
-          />
-        </span>
-      </Space>
-    </AntForm>
-  );
-}
-
-// ---------------------------------------------------------------- 3. Запрос
+// ------------------------------------------------------------- 1. Куда слать
 function RequestBlock({
   value, connections, fields, onChange,
 }: { value?: StepRequest; connections: Connection[]; fields: Field[]; onChange: (v: StepRequest) => void }) {
@@ -409,7 +284,7 @@ function HeadersEditor({ value, onChange }: { value: { name: string; value: stri
   );
 }
 
-// ------------------------------------------------------- 4–5. Правила и исход
+// ------------------------------------------------- 2. Разбор ответа и переходы
 function RulesBlock({
   rules, steps, stepId, fields, formPk, transport, onChange,
 }: {
