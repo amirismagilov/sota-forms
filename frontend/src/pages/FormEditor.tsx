@@ -328,6 +328,7 @@ export default function FormEditor() {
               fields={form.fields}
               connections={conns}
               formPk={pk!}
+              formId={form.form_id}
               previewStep={previewStep}
               onPreviewStep={setPreviewStep}
               onChange={(submit) => setForm({ ...form, submit })}
