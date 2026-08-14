@@ -111,15 +111,21 @@ async def run_connection_request(
     # заголовок из настроек шага не должен подменить секрет подключения.
     _apply_auth(conn, out_headers, query)
 
+    # Параметры ДОПИСЫВАЮТСЯ к строке запроса, а не подменяют её: httpx с
+    # аргументом `params=` затирает query из URL целиком, и `/decision?limit=100`,
+    # набранный в конструкторе, уехал бы без limit — молча и без следов в логе.
+    target = httpx.URL(url)
+    if query:
+        target = target.copy_merge_params(query)
+
     method = (method or "POST").upper()
     timeout = (conn.timeout or 5000) / 1000
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.request(
                 method,
-                url,
+                target,
                 headers=out_headers,
-                params=query,
                 json=None if method == "GET" else body,
             )
     except Exception as exc:  # noqa: BLE001 — сеть отдаём правилам как error

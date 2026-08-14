@@ -262,22 +262,28 @@ async def decision_api(client):
     port = server.servers[0].sockets[0].getsockname()[1]
     base = f"http://127.0.0.1:{port}"
 
+    # Меняем ТОЛЬКО адрес: whitelist остаётся посеянный. Стереть его здесь
+    # значило бы проверять путь, которого в проде нет, — и не заметить, что
+    # правило whitelist режет `/decision-random?limit=100` на 403.
+    seeded = (await client.get("/api/connections")).json()
+    conn = next(c for c in seeded if c["id"] == "conn_decision")
     resp = await client.put(
         "/api/connections/conn_decision",
-        json={
-            "name": "Система принятия решения (mock)",
-            "base_url": f"{base}/api/mock/ext",
-            "auth_type": "none",
-            "auth_config": {},
-            "whitelist": [],
-        },
+        json={**conn, "base_url": f"{base}/api/mock/ext"},
     )
     assert resp.status_code == 200, resp.text
+    assert conn["whitelist"], "подключение должно приходить с whitelist из seed"
     try:
         yield base
     finally:
+        # Дожидаемся РЕАЛЬНОЙ остановки: брошенный сервер продолжает держать
+        # сессии к БД, а следующий тест сразу делает drop_all — гонка даёт
+        # полупосеянные строки и «мигающие» падения на ровном месте.
         server.should_exit = True
-        await task
+        try:
+            await asyncio.wait_for(task, timeout=10)
+        except TimeoutError:
+            task.cancel()
 
 
 CREDIT_FIELDS = [
@@ -511,6 +517,92 @@ async def test_flow_endpoint_normalizes_legacy_form(client):
     assert flow["steps"][0]["request"]["transport"] == "webhook"
     assert flow["steps"][0]["rules"][0]["then"]["text"] == "Принято"
     assert flow["steps"][0]["fieldIds"] == ["a"]
+
+
+async def test_random_decision_mock_covers_all_three_branches(client):
+    """Случайная ручка обязана уметь выдать каждый из трёх вердиктов.
+
+    Проверяется и принудительный режим (иначе конкретную ветку не отладить),
+    и то, что за разумное число бросков выпадают все три, — «случайная» ручка,
+    застрявшая на одном ответе, бесполезнее детерминированной.
+    """
+    for verdict in ("approved", "declined", "manual"):
+        r = await client.post(f"/api/mock/ext/decision-random?decision={verdict}", json={"data": {}})
+        assert r.status_code == 200, r.text
+        assert r.json()["decision"] == verdict
+
+    seen = set()
+    for _ in range(60):
+        r = await client.post("/api/mock/ext/decision-random", json={"data": {}})
+        seen.add(r.json()["decision"])
+    assert seen == {"approved", "declined", "manual"}
+
+
+async def test_random_decision_mock_limit_defaults_to_100(client):
+    approved = await client.post("/api/mock/ext/decision-random?decision=approved", json={"data": {}})
+    assert approved.json()["approvedLimit"] == 100
+    custom = await client.post("/api/mock/ext/decision-random?decision=approved&limit=250000", json={"data": {}})
+    assert custom.json()["approvedLimit"] == 250000
+    # Ручная проверка тоже несёт сумму — правило может ветвиться и по ней.
+    manual = await client.post("/api/mock/ext/decision-random?decision=manual&limit=500", json={"data": {}})
+    assert manual.json()["approvedLimit"] == 500
+
+
+async def test_random_decision_mock_matches_the_same_rules(client, decision_api):
+    """Ответ совместим с правилами демо-формы: путь `decision`, сумма в `approvedLimit`."""
+    submit = {
+        "steps": [
+            {
+                "id": "main",
+                "request": {
+                    "transport": "rest",
+                    "connectionId": "conn_decision",
+                    "endpoint": "/decision-random?decision=approved&limit=100",
+                    "method": "POST",
+                    "payload": "data",
+                },
+                "rules": CREDIT_SUBMIT["steps"][0]["rules"],
+            },
+            CREDIT_SUBMIT["steps"][1],
+        ]
+    }
+    await _publish_credit_form(client, "flow_credit_random", submit=submit)
+    r = await client.post("/api/public/forms/flow_credit_random/submit", json={"data": {"amount": 1000}})
+    assert r.status_code == 200, r.text
+    outcome = r.json()["outcome"]
+    assert outcome["kind"] == "fields"
+    assert outcome["values"]["approved_limit"] == 100
+
+
+async def test_endpoint_query_string_survives_the_request(client, decision_api):
+    """Параметры из адреса шага доезжают до внешней системы.
+
+    Регресс: httpx с аргументом `params=` затирает query из URL целиком, поэтому
+    `/decision-random?limit=777` уходил без limit — молча, с виду успешно, и
+    ловилось это только «мигающими» тестами.
+    """
+    submit = {
+        "steps": [
+            {
+                "id": "main",
+                "request": {
+                    "transport": "rest",
+                    "connectionId": "conn_decision",
+                    "endpoint": "/decision-random?decision=manual&limit=777",
+                    "method": "POST",
+                    "payload": "data",
+                    "exposeResponse": True,
+                },
+                "rules": [{"id": "any", "when": [], "then": {"kind": "message", "text": "ок"}}],
+            }
+        ]
+    }
+    await _publish_credit_form(client, "flow_credit_query", submit=submit)
+    r = await client.post("/api/public/forms/flow_credit_query/submit", json={"data": {}})
+    assert r.status_code == 200, r.text
+    body = r.json()["outcome"]["response"]["body"]
+    assert body["decision"] == "manual"      # ?decision= доехал
+    assert body["approvedLimit"] == 777      # ?limit= доехал
 
 
 async def test_seeded_credit_form_runs_end_to_end(client, decision_api):

@@ -241,7 +241,11 @@ def _seed_credit_flow(db) -> None:
         base_url=MOCK_EXT_BASE,
         auth_type="none",
         auth_config={},
-        whitelist=["^/decision$"],
+        # Префикс, а не точный путь: сюда попадают и `/decision`, и
+        # `/decision-random`, и любой из них со строкой запроса
+        # (`/decision-random?limit=100`) — иначе whitelist резал бы 403 ровно там,
+        # где автор настраивает параметры ручки.
+        whitelist=["^/decision"],
     )
 
     fields = [

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import random
+
 from fastapi import APIRouter, Request
 
 router = APIRouter(prefix="/api/mock", tags=["mock"])
@@ -134,4 +136,57 @@ async def ext_decision(body: dict):
         "approvedLimit": limit,
         "rate": 17.9,
         "offerValidDays": 5,
+    }
+
+
+_VERDICTS = ("approved", "declined", "manual")
+
+
+@router.post("/ext/decision-random")
+async def ext_decision_random(body: dict | None = None, limit: float = 100, decision: str = ""):
+    """Случайный вердикт — стенд для ручной проверки всех веток флоу.
+
+    В отличие от `/ext/decision` (детерминированный, на нём держатся тесты)
+    эта ручка бросает кубик и возвращает один из трёх исходов равновероятно:
+
+        approved  — одобрено, `approvedLimit` = limit
+        declined  — отказ
+        manual    — нужны дополнительные документы
+
+    - `?limit=100` — сумма одобрения, ₽ (по умолчанию 100);
+    - `?decision=approved|declined|manual` — зафиксировать исход, когда нужно
+      прогнать конкретную ветку, а не ждать нужной грани кубика.
+
+    Форма настройки та же, что у `/ext/decision`: поле ответа `decision`,
+    сумма в `approvedLimit` — правила переставлять не придётся.
+    """
+    data = (body or {}).get("data") or body or {}
+    verdict = decision if decision in _VERDICTS else random.choice(_VERDICTS)  # noqa: S311 — это мок, не крипта
+    request_id = "REQ-" + str(random.randint(100000, 999999))  # noqa: S311
+    # Рубли целыми: «100.0 ₽» в поле суммы выглядит как ошибка расчёта.
+    amount = int(limit) if float(limit).is_integer() else limit
+
+    if verdict == "declined":
+        return {
+            "requestId": request_id,
+            "decision": "declined",
+            "reason": "Отказ по результатам скоринга",
+        }
+    if verdict == "manual":
+        return {
+            "requestId": request_id,
+            "decision": "manual",
+            "approvedLimit": amount,
+            "reason": "Нужны дополнительные документы",
+            "requiredDocs": ["Справка о доходах", "Копия трудовой книжки"],
+        }
+    return {
+        "requestId": request_id,
+        "decision": "approved",
+        "approvedLimit": amount,
+        "rate": 17.9,
+        "offerValidDays": 5,
+        # Эхо запроса: видно, что именно дошло до «внешней системы», —
+        # без этого отладка шаблона тела превращается в гадание.
+        "echo": data,
     }
