@@ -5,7 +5,7 @@ import {
 } from 'antd';
 import { useState } from 'react';
 import { testFlow } from '../api';
-import { editorSteps, MAIN_STEP, writeSteps } from '../renderer/flow';
+import { editorSteps, fieldStep, MAIN_STEP, writeSteps } from '../renderer/flow';
 import type {
   Connection, Field, FlowStep, FlowTestResult, OutcomeAction, ResponseRule,
   RuleCondition, StepRequest, SubmitConfig,
@@ -38,11 +38,44 @@ const SOURCES = [
 let seq = 0;
 const newId = (prefix: string) => `${prefix}_${Date.now().toString(36)}_${(seq += 1)}`;
 
+/** Компоновка — не поле: значения у неё нет, в тело запроса она не попадает. */
+const VALUELESS = ['section_header', 'divider', 'info_text'];
+
+// Значения для примера тела запроса. Правдоподобие тут вторично, важен ТИП:
+// автор должен видеть, что сумма уедет числом, а мультивыбор — массивом. Иначе
+// несовпадение вскроется уже на валидации у принимающей стороны.
+const SAMPLES: Record<string, unknown> = {
+  amount: 100000, number: 100000, calculated: 12345, slider: 50, rating: 5,
+  checkbox: true, switch: true, same_as: true,
+  date: '1990-05-12', datetime: '1990-05-12 09:30:00', time: '09:30:00',
+  email: 'client@example.com', phone: '+7 900 000-00-00', url: 'https://example.com',
+  inn: '7707083893', snils: '112-233-445 95', passport: '4510 123456',
+  bik: '044525225', kpp: '770701001', ogrn: '1027700132195', card: '4276 1600 1234 5678',
+  color: '#FF5028', signature: 'data:image/png;base64,iVBORw0…', textarea: 'Комментарий клиента',
+};
+
+function sampleValue(f: Field): unknown {
+  if (f.type === 'file' || f.type === 'image') return [{ filename: 'scan.pdf', url: '/api/files/ab12…' }];
+  if (f.type === 'suggest') {
+    return f.suggest?.storeAs === 'object'
+      ? { value: 'г Москва', data: { fias_id: '0c5b2444-…' } }
+      : 'г Москва';
+  }
+  const first = f.options?.[0]?.value;
+  if (f.type === 'checkbox_group') return [first || 'option_1'];
+  if (f.type === 'select_static' || f.type === 'radio_group') return first || 'option_1';
+  if (f.type === 'dict_checkbox') return ['CODE_1'];
+  if (f.type === 'dict_select' || f.type === 'dict_radio') return 'CODE_1';
+  return SAMPLES[f.type] ?? 'текст';
+}
+
 interface Props {
   submit: SubmitConfig;
   fields: Field[];
   connections: Connection[];
   formPk: string;
+  /** Публичный form-id — он же уезжает в конверте, поэтому виден в примере тела. */
+  formId: string;
   /** Шаг, открытый в предпросмотре справа. */
   previewStep: string;
   onPreviewStep: (step: string) => void;
@@ -57,7 +90,7 @@ interface Props {
  * в полях не видно: запрос наружу и правила перехода по его ответу.
  */
 export default function FlowEditor({
-  submit, fields, connections, formPk, previewStep, onPreviewStep, onChange,
+  submit, fields, connections, formPk, formId, previewStep, onPreviewStep, onChange,
 }: Props) {
   // Шаги приходят из вкладки «Поля» — здесь они только читаются. Добавление,
   // переименование и удаление шага живут там же, где видно их поля: держать
@@ -68,6 +101,16 @@ export default function FlowEditor({
 
   const patchStep = (id: string, patch: Partial<FlowStep>) =>
     onChange(writeSteps(submit, steps.map((s) => (s.id === id ? { ...s, ...patch } : s))));
+
+  // Запрос уносит значения ВСЕХ пройденных шагов, а не только текущего
+  // (`FormRenderer.handleSubmit`): второму шагу почти всегда нужна сумма с
+  // первого. Пример тела обязан показывать ровно этот набор, иначе он врёт.
+  const stepIdx = steps.findIndex((s) => s.id === step.id);
+  const sentFields = fields.filter((f) => {
+    if (VALUELESS.includes(f.type)) return false;
+    const idx = steps.findIndex((s) => s.id === fieldStep(f));
+    return idx >= 0 && idx <= stepIdx;
+  });
 
   return (
     <div>
@@ -110,7 +153,10 @@ export default function FlowEditor({
               <RequestBlock
                 value={step.request}
                 connections={connections}
-                fields={fields}
+                fields={sentFields}
+                formId={formId}
+                stepId={step.id}
+                multiStep={stepIdx > 0}
                 onChange={(request) => patchStep(step.id, { request })}
               />
             ),
@@ -142,8 +188,11 @@ export default function FlowEditor({
 
 // ------------------------------------------------------------- 1. Куда слать
 function RequestBlock({
-  value, connections, fields, onChange,
-}: { value?: StepRequest; connections: Connection[]; fields: Field[]; onChange: (v: StepRequest) => void }) {
+  value, connections, fields, formId, stepId, multiStep, onChange,
+}: {
+  value?: StepRequest; connections: Connection[]; fields: Field[];
+  formId: string; stepId: string; multiStep: boolean; onChange: (v: StepRequest) => void;
+}) {
   const v = value || {};
   const transport = v.transport || (v.webhookUrl ? 'webhook' : v.connectionId ? 'rest' : 'none');
   const patch = (p: Partial<StepRequest>) => onChange({ ...v, ...p });
@@ -228,6 +277,16 @@ function RequestBlock({
               <Radio value="custom">Свой JSON-шаблон</Radio>
             </Radio.Group>
           </AntForm.Item>
+          {(v.payload || 'envelope') !== 'custom' && (
+            <BodyPreview
+              mode={(v.payload || 'envelope') as 'envelope' | 'data'}
+              method={v.method || 'POST'}
+              fields={fields}
+              formId={formId}
+              stepId={stepId}
+              multiStep={multiStep}
+            />
+          )}
           {v.payload === 'custom' && (
             <AntForm.Item
               style={{ marginBottom: 8 }}
@@ -262,6 +321,69 @@ function RequestBlock({
         </div>
       )}
     </AntForm>
+  );
+}
+
+/**
+ * Что именно уедет — готовым JSON, а не описанием словами.
+ *
+ * «Конверт» и «Только данные» собираются сервером, автору их не видно нигде:
+ * у «своего шаблона» тело хотя бы набрано руками, а эти два до сих пор
+ * приходилось представлять в уме. Ключи и типы здесь настоящие (те же поля,
+ * тот же `payload`-режим из `backend/app/flow.py::build_request_body`),
+ * выдуманы только значения.
+ */
+function BodyPreview({ mode, method, fields, formId, stepId, multiStep }: {
+  mode: 'envelope' | 'data'; method: string; fields: Field[];
+  formId: string; stepId: string; multiStep: boolean;
+}) {
+  if (method === 'GET') {
+    return (
+      <Alert
+        type="warning"
+        showIcon
+        style={{ marginBottom: 8 }}
+        message="GET уходит без тела — поля не уедут"
+        description={
+          <span style={{ fontSize: 12 }}>
+            Выбранный режим тела не применится. Передайте нужное прямо в адресе — <code>/clients/{'{{inn}}'}</code> —
+            или смените метод на POST.
+          </span>
+        }
+      />
+    );
+  }
+
+  const data: Record<string, unknown> = {};
+  fields.forEach((f) => { if (f.id) data[f.id] = sampleValue(f); });
+  const body = mode === 'data' ? { data } : {
+    formId: formId || 'my_form',
+    submissionId: 'sub_9f2c1a4b',
+    step: stepId,
+    data,
+    submittedAt: '2026-08-14T12:31:05+00:00',
+  };
+
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <pre
+        style={{
+          margin: 0, padding: '8px 12px', border: '1px solid #f0f0f0', borderRadius: 6,
+          background: '#fafafa', color: '#595959', fontFamily: 'monospace', fontSize: 12,
+          lineHeight: 1.5, maxHeight: 260, overflow: 'auto',
+        }}
+      >
+        {JSON.stringify(body, null, 2)}
+      </pre>
+      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
+        Значения выдуманы, ключи и типы — настоящие: сумма уедет числом, мультивыбор — массивом.
+        {!fields.length && ' Полей со значением на этом шаге нет, поэтому data пустой.'}
+        {multiStep && ' Внутри data — поля всех пройденных шагов, а не только этого.'}
+        {mode === 'envelope'
+          ? ' Вокруг данных — метаданные отправления: из какой формы, каким заполнением (по submissionId принимающая сторона отсекает повторы), с какого шага и когда.'
+          : ' Метаданных нет — ровно этот формат ждёт sota-bpmn при завершении задачи процесса.'}
+      </Text>
+    </div>
   );
 }
 
