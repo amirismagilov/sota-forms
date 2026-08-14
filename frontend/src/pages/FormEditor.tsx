@@ -36,7 +36,7 @@ import {
   publishForm, rollbackForm, updateForm, uploadFile,
 } from '../api';
 import { extractRefs } from '../renderer/engine';
-import { flowSteps, MAIN_STEP } from '../renderer/flow';
+import { editorSteps, MAIN_STEP, newStepId, writeSteps } from '../renderer/flow';
 import type { Connection, Dictionary, Field, FormSchema, FormVersionInfo } from '../types';
 import ThemedForm from '../widget/ThemedForm';
 import { FIELD_TYPE_GROUPS, MASK_PRESETS, OPERATORS } from './fieldTypes';
@@ -86,13 +86,8 @@ export default function FormEditor() {
   // field's position didn't match editIndex, letting a field reference itself).
   const currentFieldId = editIndex !== null ? form.fields[editIndex]?.id : null;
   const otherFields = form.fields.filter((f) => f.id !== currentFieldId);
-  // Шаги флоу нужны и списку полей (бейдж «на каком шаге»), и предпросмотру.
-  const steps = flowSteps(form.submit);
-  const stepLabel = (id: string) => {
-    const i = steps.findIndex((s) => s.id === id);
-    if (i < 0) return id;
-    return steps[i].title || (i === 0 ? 'Шаг 1' : steps[i].id);
-  };
+  // Шаги — структура формы: список полей, предпросмотр и вкладка «Флоу» читают их отсюда.
+  const steps = editorSteps(form.submit);
 
   // Fields imported from Operaton ARE process variables: a gateway downstream
   // reads them by name. Renaming one only fails at runtime, long after the edit,
@@ -103,12 +98,55 @@ export default function FormEditor() {
   const importWarnings = form.source_meta?.report?.warnings || [];
   const importUnsupported = form.source_meta?.report?.unsupported || [];
 
-  function openEditor(index: number | null) {
+  // ---- Шаги: структура формы живёт здесь, во вкладке «Поля» ----
+  function commitSteps(next: any[]) {
+    setForm({ ...form!, submit: writeSteps(form!.submit, next) });
+  }
+
+  function patchStep(id: string, patch: Record<string, any>) {
+    commitSteps(steps.map((s) => (s.id === id ? { ...s, ...patch } : s)));
+  }
+
+  function addStep() {
+    const id = newStepId();
+    commitSteps([...steps, {
+      id,
+      title: `Шаг ${steps.length + 1}`,
+      description: '',
+      button: { text: 'Отправить' },
+      request: { transport: 'none' },
+      rules: [{ id: `rule_${id}`, name: 'Готово', when: [], then: { kind: 'message', messageType: 'success', text: 'Спасибо!' } }],
+    }]);
+    setPreviewStep(id);
+  }
+
+  function deleteStep(id: string) {
+    // Поля удалённого шага не выбрасываем — переносим на первый. Молча потерять
+    // вместе с шагом десяток настроенных полей куда хуже, чем оставить лишние.
+    const moved = form!.fields.map((f) => ((f.step || MAIN_STEP) === id ? { ...f, step: MAIN_STEP } : f));
+    const nextSteps = steps.filter((s) => s.id !== id).map((s) => ({
+      ...s,
+      // Правила, ведущие на удалённый шаг, превращаются в сообщение: ссылка на
+      // несуществующий шаг — сломанная форма, и лучше это видеть в редакторе.
+      rules: (s.rules || []).map((r) => (r.then?.kind === 'fields' && r.then?.stepId === id
+        ? { ...r, then: { kind: 'message' as const, messageType: 'success' as const, text: 'Спасибо!' } }
+        : r)),
+    }));
+    setForm({ ...form!, fields: moved, submit: writeSteps(form!.submit, nextSteps) });
+    setPreviewStep(MAIN_STEP);
+    message.success('Шаг удалён, его поля перенесены на первый шаг');
+  }
+
+  function moveFieldToStep(fieldId: string, toStep: string) {
+    setForm({ ...form!, fields: form!.fields.map((f) => (f.id === fieldId ? { ...f, step: toStep } : f)) });
+  }
+
+  function openEditor(index: number | null, stepId?: string) {
     // Clear the shared editor form first, otherwise values from the previously
     // edited field (placeholder, dictDisplay, …) leak into this one and get saved.
     fieldForm.resetFields();
     if (index === null) {
-      const f: Field = { id: newFieldId(), type: 'text', label: 'Новое поле', gridSpan: 1 };
+      const f: Field = { id: newFieldId(), type: 'text', label: 'Новое поле', gridSpan: 1, step: stepId || MAIN_STEP };
       setForm({ ...form!, fields: [...form!.fields, f] });
       setEditIndex(form!.fields.length);
       setIsNewField(true);
@@ -296,23 +334,33 @@ export default function FormEditor() {
             />
           ) : leftView === 'fields' ? (
             <>
-              <div>
-                {form.fields.map((f, i) => (
-                  <FieldRow
-                    key={f.id}
-                    field={f}
-                    stepName={steps.length > 1 ? stepLabel(f.step || MAIN_STEP) : null}
-                    highlight={highlight === f.id}
-                    onEdit={() => openEditor(i)}
-                    onDelete={() => removeField(i)}
-                    onBadgeClick={(target: string) => { setHighlight(target); setTimeout(() => setHighlight(null), 1500); }}
-                    onCopyId={() => { navigator.clipboard?.writeText(f.id); message.success('ID скопирован: ' + f.id); }}
-                  />
-                ))}
-              </div>
-              <Button block icon={<PlusOutlined />} onClick={() => openEditor(null)} style={{ marginTop: 8 }}>
-                Добавить поле
+              {steps.map((s, si) => (
+                <StepSection
+                  key={s.id}
+                  step={s}
+                  index={si}
+                  steps={steps}
+                  fields={form.fields}
+                  active={previewStep === s.id}
+                  onActivate={() => setPreviewStep(s.id)}
+                  onPatch={(patch: Record<string, any>) => patchStep(s.id, patch)}
+                  onDelete={() => deleteStep(s.id)}
+                  onAddField={() => openEditor(null, s.id)}
+                  onMoveField={moveFieldToStep}
+                  onEditField={(f: Field) => openEditor(form.fields.findIndex((x) => x.id === f.id))}
+                  onDeleteField={(f: Field) => removeField(form.fields.findIndex((x) => x.id === f.id))}
+                  highlight={highlight}
+                  onBadgeClick={(target: string) => { setHighlight(target); setTimeout(() => setHighlight(null), 1500); }}
+                  onCopyId={(id: string) => { navigator.clipboard?.writeText(id); message.success('ID скопирован: ' + id); }}
+                />
+              ))}
+              <Button block icon={<BranchesOutlined />} onClick={addStep} style={{ marginTop: 8 }}>
+                Добавить шаг
               </Button>
+              <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: 8 }}>
+                Шаг — это отдельный экран формы. Куда уходит его JSON и по какому ответу
+                открывается следующий шаг — на вкладке «Флоу отправки».
+              </Typography.Paragraph>
             </>
           ) : (
             <>
@@ -328,21 +376,6 @@ export default function FormEditor() {
             </>
           )}
 
-          {leftView !== 'flow' && (
-            <Card size="small" style={{ marginTop: 16 }}>
-              <Space wrap>
-                <Typography.Text type="secondary">Отправка:</Typography.Text>
-                {steps.map((s, i) => (
-                  <Tag key={s.id} color={i === 0 ? 'blue' : 'purple'}>
-                    {i + 1}. {s.title || (i === 0 ? 'Первый шаг' : s.id)} → «{s.button?.text || 'Отправить'}»
-                  </Tag>
-                ))}
-                <Button size="small" type="link" icon={<BranchesOutlined />} onClick={() => setLeftView('flow')}>
-                  Настроить флоу
-                </Button>
-              </Space>
-            </Card>
-          )}
         </Card>
       </Col>
 
@@ -408,20 +441,6 @@ export default function FormEditor() {
           >
             <Input disabled={isBoundField} />
           </AntForm.Item>
-
-          {steps.length > 1 && (
-            <AntForm.Item
-              name="step"
-              label="Шаг флоу"
-              initialValue={MAIN_STEP}
-              tooltip="На каком экране показывать поле. Поля следующих шагов не видны и не проверяются, пока флоу до них не дойдёт."
-            >
-              <Select options={steps.map((s, i) => ({
-                label: `${i + 1}. ${s.title || (i === 0 ? 'Первый шаг' : s.id)}`,
-                value: s.id,
-              }))} />
-            </AntForm.Item>
-          )}
 
           {!LAYOUT_TYPES.includes(editType) && (
             <>
@@ -720,8 +739,101 @@ export default function FormEditor() {
   );
 }
 
+// ---- Шаг как секция: заголовок, кнопка, свои поля -------------------------
+// Шаг — это отдельный ЭКРАН формы, поэтому он и живёт во вкладке «Поля» рядом
+// с тем, что на нём показывается. Куда уходит его JSON и по какому ответу
+// открывается следующий шаг — поведение, оно на вкладке «Флоу отправки».
+function StepSection({
+  step, index, steps, fields, active, onActivate, onPatch, onDelete, onAddField,
+  onMoveField, onEditField, onDeleteField, highlight, onBadgeClick, onCopyId,
+}: any) {
+  const isFirst = index === 0;
+  const mine: Field[] = fields.filter((f: Field) => (f.step || MAIN_STEP) === step.id);
+  const single = steps.length === 1;
+
+  return (
+    <Card
+      size="small"
+      style={{ marginBottom: 12, borderColor: active && !single ? '#FF5028' : undefined }}
+      styles={{ body: { paddingTop: 8 } }}
+      title={
+        <Space wrap size={6}>
+          <Tag color={isFirst ? 'blue' : 'purple'}>{index + 1}</Tag>
+          {single ? (
+            <Typography.Text strong>Поля формы</Typography.Text>
+          ) : (
+            <Input
+              variant="borderless"
+              value={step.title}
+              placeholder={isFirst ? 'Первый шаг' : `Шаг ${index + 1}`}
+              onChange={(e) => onPatch({ title: e.target.value })}
+              style={{ fontWeight: 600, width: 200 }}
+            />
+          )}
+          <Tag>{mine.length} полей</Tag>
+        </Space>
+      }
+      extra={
+        <Space size={4}>
+          {!single && (
+            <Button size="small" type={active ? 'primary' : 'default'} ghost={active} onClick={onActivate}>
+              В предпросмотр
+            </Button>
+          )}
+          {!isFirst && (
+            <Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={onDelete} title="Удалить шаг" />
+          )}
+        </Space>
+      }
+    >
+      {!single && (
+        <Input
+          variant="borderless"
+          value={step.description}
+          placeholder="Подпись под заголовком шага (необязательно)"
+          onChange={(e) => onPatch({ description: e.target.value })}
+          style={{ padding: 0, marginBottom: 8, fontSize: 12, color: '#888' }}
+        />
+      )}
+
+      {mine.map((f) => (
+        <FieldRow
+          key={f.id}
+          field={f}
+          steps={steps}
+          highlight={highlight === f.id}
+          onEdit={() => onEditField(f)}
+          onDelete={() => onDeleteField(f)}
+          onMoveStep={(to: string) => onMoveField(f.id, to)}
+          onBadgeClick={onBadgeClick}
+          onCopyId={() => onCopyId(f.id)}
+        />
+      ))}
+      {!mine.length && (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          Пока пусто — добавьте поле или перенесите его с другого шага.
+        </Typography.Text>
+      )}
+
+      <Space style={{ marginTop: 8, width: '100%' }} direction="vertical" size={6}>
+        <Button block size="small" icon={<PlusOutlined />} onClick={onAddField}>Добавить поле</Button>
+        <Space size={6} wrap>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>Кнопка шага:</Typography.Text>
+          <Input
+            size="small"
+            style={{ width: 200 }}
+            value={step.button?.text}
+            placeholder="Отправить"
+            onChange={(e) => onPatch({ button: { ...(step.button || {}), text: e.target.value } })}
+          />
+        </Space>
+      </Space>
+    </Card>
+  );
+}
+
 // ---- Field row with dependency badges ----
-function FieldRow({ field, stepName, highlight, onEdit, onDelete, onBadgeClick, onCopyId }: any) {
+function FieldRow({ field, steps, highlight, onEdit, onDelete, onMoveStep, onBadgeClick, onCopyId }: any) {
   const f: Field = field;
   const isLayout = LAYOUT_TYPES.includes(f.type);
   const badges: React.ReactNode[] = [];
@@ -748,13 +860,27 @@ function FieldRow({ field, stepName, highlight, onEdit, onDelete, onBadgeClick, 
             <Typography.Text strong={!isLayout} type={isLayout ? 'secondary' : undefined}>{f.label || '(без названия)'}</Typography.Text>
             <Tag>{f.type}</Tag>
             <Tag style={{ cursor: 'pointer', fontFamily: 'monospace' }} onClick={onCopyId} icon={<CopyOutlined />}>{f.id}</Tag>
-            {stepName && <Tag color="purple" icon={<BranchesOutlined />}>{stepName}</Tag>}
             {f.required && <Tag color="red">*</Tag>}
             {badges}
           </Space>
         </Col>
         <Col>
           <Space size={2}>
+            {steps?.length > 1 && (
+              // Перенос поля между шагами — здесь же, где поле и видно: иначе
+              // приходилось бы открывать редактор поля ради одного select'а.
+              <Select
+                size="small"
+                style={{ width: 130 }}
+                value={f.step || MAIN_STEP}
+                onChange={onMoveStep}
+                title="Перенести на другой шаг"
+                options={steps.map((s: any, i: number) => ({
+                  label: s.title || (i === 0 ? 'Первый шаг' : s.id),
+                  value: s.id,
+                }))}
+              />
+            )}
             <Button size="small" type="text" icon={<EditOutlined />} onClick={onEdit} />
             <Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={onDelete} />
           </Space>

@@ -44,3 +44,53 @@ export function findStep(steps: FlowStep[], id: string | undefined): FlowStep {
 export function fieldStep(f: Field): string {
   return f.step || MAIN_STEP;
 }
+
+/**
+ * Шаги для КОНСТРУКТОРА — со всей начинкой (запрос, правила), а не только тем,
+ * что нужно рендеру.
+ *
+ * Форму, настроенную до появления шагов, разворачиваем в один шаг «main» с её
+ * старым вебхуком и сообщением: иначе автор откроет редактор и увидит пустые
+ * настройки там, где на деле работает legacy-вебхук. Ровно то же делает
+ * `backend/app/flow.py::normalize_flow`, и живут эти две функции по одним
+ * правилам намеренно — редактор обязан показывать то, что реально исполнится.
+ */
+export function editorSteps(submit: SubmitConfig | undefined): FlowStep[] {
+  if (submit?.steps?.length) return flowSteps(submit);
+  return [{
+    id: MAIN_STEP,
+    title: '',
+    description: '',
+    button: normalizeButton(undefined),
+    request: submit?.webhookUrl
+      ? { transport: 'webhook', webhookUrl: submit.webhookUrl }
+      : { transport: 'none' },
+    rules: [{
+      id: 'default',
+      name: 'По умолчанию',
+      when: [],
+      then: submit?.redirectUrl
+        ? { kind: 'redirect', url: submit.redirectUrl }
+        : { kind: 'message', messageType: 'success', text: submit?.successMessage || 'Спасибо!' },
+    }],
+  }];
+}
+
+/**
+ * Записать шаги обратно в submit, стерев legacy-ключи.
+ *
+ * Держать одновременно и `steps`, и старые `webhookUrl`/`successMessage` —
+ * верный способ однажды отправить данные не туда: какой из двух источников
+ * победит, зависит от порядка нормализации, а не от намерения автора.
+ */
+export function writeSteps(submit: SubmitConfig | undefined, steps: FlowStep[]): SubmitConfig {
+  const { webhookUrl, successMessage, redirectUrl, ...rest } = submit || {};
+  void webhookUrl; void successMessage; void redirectUrl;
+  return { ...rest, steps };
+}
+
+let stepSeq = 0;
+export function newStepId(): string {
+  stepSeq += 1;
+  return `step_${Date.now().toString(36)}_${stepSeq}`;
+}
