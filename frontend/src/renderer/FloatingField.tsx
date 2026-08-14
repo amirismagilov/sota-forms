@@ -38,6 +38,11 @@ export default function FloatingField({
           pointerEvents: 'none',
           transition: '0.15s ease all',
           lineHeight: 1,
+          // Поля с аддоном (сумма — «₽») antd рендерит группой и поднимает
+          // z-index сфокусированному элементу, чтобы его рамку не перекрывал
+          // сосед. Всплывший лейбл при этом уезжал ПОД поле и обрезался ровно
+          // по верхней границе. Поднимаем его над группой.
+          zIndex: 2,
           overflow: 'hidden',
           textOverflow: 'ellipsis',
           whiteSpace: 'nowrap',
