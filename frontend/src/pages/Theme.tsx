@@ -52,7 +52,7 @@ export default function Theme() {
       </Col>
       <Col span={12}>
         <Card title="Предпросмотр темы">
-          <ThemedForm schema={{ fields: PREVIEW_FIELDS as any, grid_columns: 2, submit: {}, title: '' }} dictionaries={[]} tokens={{ token }} showTitle={false} />
+          <ThemedForm schema={{ fields: PREVIEW_FIELDS as any, grid_columns: 2, submit: {}, title: '' }} dictionaries={[]} tokens={{ token }} />
         </Card>
       </Col>
     </Row>

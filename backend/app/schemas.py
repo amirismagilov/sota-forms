@@ -98,6 +98,15 @@ class OperatonImportIn(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class OperatonSyncIn(BaseModel):
+    """Pull every form of a process at once (omit process_key for all processes)."""
+
+    process_key: str | None = None
+    # Forms already imported are skipped, never silently overwritten — a re-import
+    # would discard edits the user made after the first import.
+    publish: bool = False
+
+
 # ---- Public ----
 class PublicFormOut(BaseModel):
     form_id: str
@@ -117,6 +126,26 @@ class SubmitIn(BaseModel):
     # Runtime context supplied by the embedding host, e.g. {"taskId": "..."} for
     # an Operaton user task. Feeds the {{placeholders}} of the webhook URL.
     context: dict[str, Any] = Field(default_factory=dict)
+    # Which step of the submit flow is being sent. Empty = the first one.
+    step: str | None = None
+    # Continuation of a multi-step flow: both come from the previous step's
+    # response and are verified together (see crypto.sign_flow_token).
+    submissionId: str | None = None
+    flowToken: str | None = None
+
+
+class FlowTestIn(BaseModel):
+    """«Тест ответа» в конструкторе: прогон правил шага по образцу ответа.
+
+    Работает по ЧЕРНОВИКУ, а не по опубликованной версии — иначе нельзя было бы
+    проверить правило до публикации, ради которой его и настраивают.
+    """
+
+    step: str | None = None
+    status: int = 200
+    response: Any = None
+    data: dict[str, Any] = Field(default_factory=dict)
+    error: str | None = None
 
 
 class ProxyIn(BaseModel):

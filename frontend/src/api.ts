@@ -1,7 +1,7 @@
 import axios from 'axios';
 import type {
-  Connection, Dictionary, FormListResult, FormSchema, FormSource, FormVersionInfo,
-  OperatonFormSummary, OperatonPreview, OperatonProcess, PublicForm,
+  Connection, Dictionary, FlowStep, FlowTestResult, FormListResult, FormSchema, FormSource,
+  FormVersionInfo, OperatonFormSummary, OperatonPreview, OperatonProcess, PublicForm,
 } from './types';
 
 const api = axios.create({ baseURL: '/api' });
@@ -59,6 +59,16 @@ export const updateForm = (pk: string, body: Partial<FormSchema>) =>
   api.put<FormSchema>(`/forms/${pk}`, body).then((r) => r.data);
 export const deleteForm = (pk: string) => api.delete(`/forms/${pk}`).then((r) => r.data);
 export const exportForm = (pk: string) => api.get(`/forms/${pk}/export`).then((r) => r.data);
+
+// ---- Флоу отправки ----
+/** Нормализованный флоу черновика — то, что реально исполнится на submit. */
+export const getFlow = (pk: string) =>
+  api.get<{ steps: FlowStep[] }>(`/forms/${pk}/flow`).then((r) => r.data);
+/** Прогон правил шага по образцу ответа тем же движком, что и в рантайме. */
+export const testFlow = (
+  pk: string,
+  body: { step?: string; status?: number; response?: any; data?: Record<string, any>; error?: string },
+) => api.post<FlowTestResult>(`/forms/${pk}/flow/test`, body).then((r) => r.data);
 
 // ---- Dictionaries ----
 export const listDictionaries = () =>
@@ -149,5 +159,27 @@ export const operatonPreview = (body: OperatonImportBody) =>
   api.post<OperatonPreview>('/operaton/preview', body).then((r) => r.data);
 export const operatonImport = (body: OperatonImportBody) =>
   api.post<FormSchema>('/operaton/import', body).then((r) => r.data);
+
+// Bulk: pull every form of a process at once. Already-imported forms are skipped.
+export interface OperatonSyncItem {
+  operaton_form_id: string;
+  status: 'imported' | 'skipped' | 'failed';
+  id?: string;
+  form_id?: string;
+  title?: string;
+  detail?: string;
+  published?: boolean;
+  warnings?: number;
+  unsupported?: number;
+}
+export interface OperatonSyncResult {
+  items: OperatonSyncItem[];
+  imported: number;
+  skipped: number;
+  failed: number;
+  message?: string;
+}
+export const operatonSync = (body: { process_key?: string; publish?: boolean }) =>
+  api.post<OperatonSyncResult>('/operaton/sync', body).then((r) => r.data);
 
 export default api;

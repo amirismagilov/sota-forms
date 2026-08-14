@@ -7,15 +7,27 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..bpmn_client import auth_headers
 from ..config import get_settings
-from ..crypto import sign_payload
+from ..crypto import sign_flow_token, sign_payload, verify_flow_token
 from ..db import get_db
 from ..deps import get_account_by_id
 from ..dict_resolver import resolve_api_dictionary
+from ..flow import (
+    MAIN_STEP,
+    build_context,
+    build_request_body,
+    get_step,
+    normalize_flow,
+    render_headers,
+    render_template,
+    run_rules,
+    step_field_ids,
+)
 from ..models import Dictionary, Form, FormVersion, Submission, WebhookDelivery
 from ..operaton import resolve_placeholders
-from ..suggest import resolve_suggest
+from ..proxy_client import run_connection_request
 from ..ratelimit import check_rate_limit
 from ..schemas import PublicFormOut, SubmitIn
+from ..suggest import resolve_suggest
 
 router = APIRouter(prefix="/api/public", tags=["public"])
 
@@ -181,72 +193,214 @@ async def dictionary_options(dict_id: str, body: dict | None = None, db: AsyncSe
         raise HTTPException(502, f"dictionary source error: {exc}") from exc
 
 
-@router.post("/forms/{form_id}/submit")
-async def submit_form(form_id: str, body: SubmitIn, db: AsyncSession = Depends(get_db)):
-    if not await check_rate_limit(f"submit:{form_id}", limit=120):
-        raise HTTPException(429, "rate limit exceeded")
+def _handles_failures(step: dict) -> bool:
+    """Автор сам разбирает неуспех? (есть правило по HTTP-статусу или ошибке)
 
-    f = (
-        await db.execute(select(Form).where(Form.form_id == form_id))
-    ).scalar_one_or_none()
+    Пока такого правила нет, ошибка внешней системы обязана всплыть как 502.
+    Показать «Спасибо!» на 500 от системы принятия решения — худшее, что может
+    сделать форма: пользователь уходит уверенный, что заявка подана.
+    """
+    for rule in step.get("rules") or []:
+        for cond in rule.get("when") or []:
+            if cond.get("source") in ("status", "error"):
+                return True
+    return False
+
+
+async def _load_published(db: AsyncSession, form_id: str) -> tuple[Form, FormVersion]:
+    f = (await db.execute(select(Form).where(Form.form_id == form_id))).scalar_one_or_none()
     if not f:
         raise HTTPException(404, "form not found")
     if not f.published_version or f.status == "archived":
         raise HTTPException(404, "form not available")
+    snap = (
+        await db.execute(
+            select(FormVersion).where(FormVersion.form_pk == f.id, FormVersion.version == f.published_version)
+        )
+    ).scalar_one_or_none()
+    if not snap:
+        raise HTTPException(404, "published version missing")
+    return f, snap
+
+
+@router.post("/forms/{form_id}/submit")
+async def submit_form(form_id: str, body: SubmitIn, db: AsyncSession = Depends(get_db)):
+    """Один шаг флоу: сохранить данные → отправить JSON → разобрать ответ → вернуть исход.
+
+    Многошаговая форма (заявка → скоринг → добор полей) вызывает этот эндпоинт
+    несколько раз, передавая `submissionId` + `flowToken` из предыдущего ответа:
+    данные всех шагов накапливаются в ОДНОМ заполнении, а не рассыпаются на
+    несвязанные записи.
+    """
+    if not await check_rate_limit(f"submit:{form_id}", limit=120):
+        raise HTTPException(429, "rate limit exceeded")
+
+    f, snap = await _load_published(db, form_id)
     acc = await get_account_by_id(db, f.account_id)
 
-    sub = Submission(account_id=acc.id, form_id=form_id, data=body.data, webhook_status="pending")
-    db.add(sub)
+    flow = normalize_flow(snap.submit)
+    step_id = body.step or MAIN_STEP
+    step = get_step(flow, step_id)
+    if step is None:
+        raise HTTPException(404, f"шаг '{step_id}' не найден в опубликованной версии формы")
+
+    # Продолжение флоу дописывает данные в существующее заполнение — но только
+    # предъявив подписанный на предыдущем шаге токен.
+    sub: Submission | None = None
+    if body.submissionId:
+        if not verify_flow_token(body.flowToken, body.submissionId, form_id):
+            raise HTTPException(403, "недействительный токен продолжения формы")
+        sub = await db.get(Submission, body.submissionId)
+        if sub is None or sub.form_id != form_id:
+            raise HTTPException(404, "заполнение не найдено")
+        sub.data = {**(sub.data or {}), **(body.data or {})}
+    if sub is None:
+        sub = Submission(account_id=acc.id, form_id=form_id, data=body.data, webhook_status="pending")
+        db.add(sub)
     await db.flush()
 
-    cfg = f.submit or {}
-    template = cfg.get("webhookUrl") or acc.webhook_default
     settings = get_settings()
+    request = step["request"]
+    transport = request.get("transport")
+    ctx_base = {
+        "formId": form_id,
+        "step": step["id"],
+        "submittedAt": sub.created_at.isoformat() if sub.created_at else "",
+        **(body.context or {}),
+    }
+    ctx = build_context(data=sub.data or {}, submission_id=sub.id, extra=ctx_base)
 
-    webhook_url = None
-    if template:
-        webhook_url, missing = resolve_placeholders(
-            template,
-            {
-                **(body.context or {}),
-                "bpmnBase": (settings.sota_bpmn_base or "").rstrip("/"),
-                "formId": form_id,
-                "submissionId": sub.id,
-            },
+    status: int | None = None
+    resp_body: object = None
+    error: str | None = None
+
+    if transport == "rest":
+        status, resp_body, error = await _run_rest_step(db, request, ctx)
+    elif transport == "webhook":
+        status, resp_body, error = await _run_webhook_step(
+            db, f, acc, sub, step, request, ctx, body, settings, form_id
         )
-        if missing:
-            # An Operaton form without a taskId cannot complete anything — that is
-            # a wiring bug in the host page, so fail loudly instead of dropping
-            # the submission into a webhook that can never be built.
-            sub.webhook_status = "no_context"
-            await db.commit()
-            raise HTTPException(
-                400,
-                "Форма ожидает контекст выполнения, но он не передан: "
-                + ", ".join(missing)
-                + ". Для задач Оператона встраивайте виджет с атрибутом task-id.",
-            )
-
-    if not webhook_url:
-        sub.webhook_status = "no_webhook"
-        await db.commit()
-        await db.refresh(sub)
-        return _submit_response(sub, cfg)
-
-    # `data` = the bare shape sota-bpmn's CompleteTaskRequest expects;
-    # `envelope` = our usual signed payload with submission metadata.
-    if cfg.get("payload") == "data":
-        payload = {"data": body.data}
     else:
-        payload = {
+        sub.webhook_status = "no_webhook"
+
+    # Ответ известен — пересобираем контекст и прогоняем правила.
+    ctx = build_context(
+        data=sub.data or {},
+        status=status,
+        response=resp_body,
+        error=error,
+        submission_id=sub.id,
+        extra=ctx_base,
+    )
+    failed = bool(error) or (status is not None and not (200 <= status < 300))
+    if failed and not _handles_failures(step):
+        await db.commit()
+        raise HTTPException(502, _external_error(status, error, resp_body))
+
+    outcome, rule = run_rules(step, ctx)
+    outcome = _finalize_outcome(outcome, flow, snap, step)
+    if request.get("exposeResponse"):
+        # Сырой ответ уезжает в браузер только по явной галочке автора.
+        outcome["response"] = {"status": status, "body": resp_body}
+
+    await db.commit()
+    await db.refresh(sub)
+    return {
+        "ok": True,
+        "submissionId": sub.id,
+        "flowToken": sign_flow_token(sub.id, form_id),
+        "step": step["id"],
+        "outcome": outcome,
+        "matchedRule": (rule or {}).get("id"),
+        # Старые сборки виджета читают эти два поля — оставляем их согласованными
+        # с исходом, чтобы уже встроенные формы не сломались после обновления.
+        "successMessage": outcome.get("text") if outcome.get("kind") == "message" else None,
+        "redirectUrl": outcome.get("url") if outcome.get("kind") == "redirect" else None,
+    }
+
+
+def _finalize_outcome(outcome: dict, flow: dict, snap: FormVersion, step: dict) -> dict:
+    """Досбор исхода: проверка ссылки на шаг, заголовок и список полей шага."""
+    if outcome.get("kind") != "fields":
+        return outcome
+    target = get_step(flow, outcome.get("stepId"))
+    if target is None or target["id"] == step["id"]:
+        # Правило ссылается на удалённый (или на себя же) шаг — зациклить форму
+        # нельзя, поэтому честно говорим, что настройка сломана.
+        return {
+            "kind": "message",
+            "messageType": "warning",
+            "title": "",
+            "text": "Форма настроена с ошибкой: следующий шаг не найден. Сообщите администратору.",
+        }
+    outcome["stepTitle"] = target.get("title") or ""
+    outcome["stepDescription"] = target.get("description") or ""
+    outcome["fieldIds"] = step_field_ids(snap.fields or [], target["id"])
+    outcome["button"] = target.get("button")
+    return outcome
+
+
+async def _run_rest_step(db: AsyncSession, request: dict, ctx: dict) -> tuple[int | None, object, str | None]:
+    """REST через «Подключение»: секреты и whitelist остаются на бэкенде."""
+    endpoint = render_template(request.get("endpoint") or "", ctx)
+    payload = build_request_body(request, ctx)
+    headers = render_headers(request, ctx)
+    result = await run_connection_request(
+        db,
+        request.get("connectionId"),
+        endpoint,
+        method=request.get("method") or "POST",
+        body=payload,
+        headers=headers,
+    )
+    return result["status"], result["body"], result["error"]
+
+
+async def _run_webhook_step(
+    db: AsyncSession,
+    f: Form,
+    acc,
+    sub: Submission,
+    step: dict,
+    request: dict,
+    ctx: dict,
+    body: SubmitIn,
+    settings,
+    form_id: str,
+) -> tuple[int | None, object, str | None]:
+    """Вебхук: очередь доставки с ретраями (async) или ожидание ответа (sync)."""
+    template = request.get("webhookUrl") or acc.webhook_default
+    if not template:
+        sub.webhook_status = "no_webhook"
+        return None, None, None
+
+    webhook_url, missing = resolve_placeholders(
+        template,
+        {
+            **(body.context or {}),
+            "bpmnBase": (settings.sota_bpmn_base or "").rstrip("/"),
             "formId": form_id,
             "submissionId": sub.id,
-            "data": body.data,
-            "submittedAt": sub.created_at.isoformat(),
-        }
+        },
+    )
+    if missing:
+        # An Operaton form without a taskId cannot complete anything — that is
+        # a wiring bug in the host page, so fail loudly instead of dropping
+        # the submission into a webhook that can never be built.
+        sub.webhook_status = "no_context"
+        await db.commit()
+        raise HTTPException(
+            400,
+            "Форма ожидает контекст выполнения, но он не передан: "
+            + ", ".join(missing)
+            + ". Для задач Оператона встраивайте виджет с атрибутом task-id.",
+        )
+
+    payload = build_request_body(request, ctx)
     headers = {"X-Signature": sign_payload(payload), "Content-Type": "application/json"}
-    if cfg.get("operatonComplete"):
+    if request.get("operatonComplete"):
         headers.update(auth_headers())
+    headers.update(render_headers(request, ctx))
 
     delivery = WebhookDelivery(
         submission_id=sub.id,
@@ -256,10 +410,9 @@ async def submit_form(form_id: str, body: SubmitIn, db: AsyncSession = Depends(g
     )
     db.add(delivery)
 
-    if cfg.get("delivery") != "sync":
-        await db.commit()
-        await db.refresh(sub)
-        return _submit_response(sub, cfg)
+    if request.get("delivery") != "sync":
+        # Fire-and-forget: воркер доставит с ретраями, правилам разбирать нечего.
+        return None, None, None
 
     # Synchronous mode (Operaton task completion): the person pressing «Отправить»
     # must learn right away that the task was already completed by someone else,
@@ -268,41 +421,36 @@ async def submit_form(form_id: str, body: SubmitIn, db: AsyncSession = Depends(g
     try:
         async with httpx.AsyncClient(timeout=(settings.sota_bpmn_timeout or 10000) / 1000) as client:
             resp = await client.post(webhook_url, json=payload, headers=headers)
-        delivery.last_status_code = resp.status_code
-        ok = 200 <= resp.status_code < 300
-        delivery.status = "delivered" if ok else "dead"
-        sub.webhook_status = "delivered" if ok else "failed"
-        if not ok:
-            delivery.last_error = f"HTTP {resp.status_code}: {resp.text[:300]}"
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — сетевую ошибку отдаём правилам
         delivery.status = "dead"
         delivery.last_error = str(exc)[:300]
         sub.webhook_status = "failed"
-        await db.commit()
-        raise HTTPException(502, f"Не удалось передать данные в процесс: {exc}") from exc
+        return 0, None, str(exc)[:300]
 
-    await db.commit()
-    await db.refresh(sub)
-    if delivery.status != "delivered":
-        raise HTTPException(status_code=502, detail=_engine_error(delivery.last_status_code, delivery.last_error))
-    return _submit_response(sub, cfg)
-
-
-def _submit_response(sub: Submission, cfg: dict) -> dict:
-    return {
-        "ok": True,
-        "submissionId": sub.id,
-        "successMessage": cfg.get("successMessage", "Спасибо!"),
-        "redirectUrl": cfg.get("redirectUrl"),
-    }
+    delivery.last_status_code = resp.status_code
+    ok = 200 <= resp.status_code < 300
+    delivery.status = "delivered" if ok else "dead"
+    sub.webhook_status = "delivered" if ok else "failed"
+    if not ok:
+        delivery.last_error = f"HTTP {resp.status_code}: {resp.text[:300]}"
+    try:
+        parsed = resp.json()
+    except ValueError:
+        parsed = {"text": resp.text[:2000]}
+    return resp.status_code, parsed, None
 
 
-def _engine_error(status_code: int | None, raw: str | None) -> str:
-    """Turn sota-bpmn's status codes into something a form filler understands."""
+def _external_error(status_code: int | None, error: str | None, raw: object) -> str:
+    """Код внешней системы → фраза, понятная тому, кто заполняет форму."""
+    if error:
+        return f"Не удалось передать данные: {error}"
     if status_code == 404:
         return "Задача не найдена в процессе — возможно, она уже закрыта"
     if status_code == 409:
         return "Задача уже завершена другим пользователем"
     if status_code in (401, 403):
-        return "Нет доступа к процессу: проверьте общий секрет интеграции"
-    return f"Процесс отклонил данные: {raw or status_code}"
+        return "Нет доступа к внешней системе: проверьте настройки подключения"
+    detail = ""
+    if isinstance(raw, dict):
+        detail = str(raw.get("detail") or raw.get("message") or "")[:200]
+    return f"Внешняя система отклонила данные (HTTP {status_code}){': ' + detail if detail else ''}"

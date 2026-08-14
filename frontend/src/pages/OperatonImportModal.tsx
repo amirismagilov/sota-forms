@@ -1,12 +1,12 @@
-import { InboxOutlined, ReloadOutlined } from '@ant-design/icons';
+import { CloudDownloadOutlined, InboxOutlined, ReloadOutlined } from '@ant-design/icons';
 import {
-  Alert, App, Button, Collapse, Descriptions, Divider, Form as AntForm, Input, Modal,
-  Segmented, Select, Space, Spin, Tag, Typography, Upload,
+  Alert, App, Button, Checkbox, Collapse, Descriptions, Divider, Form as AntForm, Input, List, Modal,
+  Segmented, Select, Space, Spin, Tag, Tooltip, Typography, Upload,
 } from 'antd';
 import { useCallback, useEffect, useState } from 'react';
 import {
-  operatonForms, operatonImport, operatonPreview, operatonProcesses, operatonStatus,
-  type OperatonImportBody, type OperatonStatus,
+  operatonForms, operatonImport, operatonPreview, operatonProcesses, operatonStatus, operatonSync,
+  type OperatonImportBody, type OperatonStatus, type OperatonSyncResult,
 } from '../api';
 import FormRenderer from '../renderer/FormRenderer';
 import type { OperatonFormSummary, OperatonPreview, OperatonProcess } from '../types';
@@ -15,11 +15,14 @@ type Mode = 'catalog' | 'file';
 
 /** Import a form from Operaton: pull it from the sota-bpmn catalogue or upload a .form file. */
 export default function OperatonImportModal({
-  open, onClose, onImported,
+  open, onClose, onImported, onBulkImported,
 }: {
   open: boolean;
   onClose: () => void;
+  /** Single form imported — the caller usually opens it in the editor. */
   onImported: (pk: string) => void;
+  /** Bulk sync finished — the caller just refreshes the registry. */
+  onBulkImported?: () => void;
 }) {
   const { message } = App.useApp();
   const [mode, setMode] = useState<Mode>('catalog');
@@ -33,10 +36,14 @@ export default function OperatonImportModal({
   const [loading, setLoading] = useState(false);
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<OperatonSyncResult | null>(null);
+  const [publishOnSync, setPublishOnSync] = useState(false);
   const [form] = AntForm.useForm();
 
   const reset = useCallback(() => {
     setPreview(null); setError(null); setUploaded(null); setOperatonFormId(undefined);
+    setSyncResult(null);
   }, []);
 
   useEffect(() => {
@@ -87,6 +94,17 @@ export default function OperatonImportModal({
     return false;
   }
 
+  async function doSync() {
+    setSyncing(true); setError(null); setSyncResult(null); setPreview(null);
+    try {
+      setSyncResult(await operatonSync({ process_key: process, publish: publishOnSync }));
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || 'Не удалось загрузить формы');
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   async function doImport() {
     const vals = await form.validateFields();
     setImporting(true);
@@ -112,12 +130,19 @@ export default function OperatonImportModal({
       onCancel={onClose}
       width={880}
       title="Импорт формы из Оператона"
-      footer={[
-        <Button key="c" onClick={onClose}>Отмена</Button>,
-        <Button key="ok" type="primary" disabled={!preview} loading={importing} onClick={doImport}>
-          Импортировать
-        </Button>,
-      ]}
+      footer={
+        syncResult
+          ? [
+            <Button key="more" onClick={() => setSyncResult(null)}>Загрузить ещё</Button>,
+            <Button key="done" type="primary" onClick={() => (onBulkImported ?? onClose)()}>Готово</Button>,
+          ]
+          : [
+            <Button key="c" onClick={onClose}>Отмена</Button>,
+            <Button key="ok" type="primary" disabled={!preview} loading={importing} onClick={doImport}>
+              Импортировать
+            </Button>,
+          ]
+      }
     >
       <Segmented
         block
@@ -156,6 +181,32 @@ export default function OperatonImportModal({
             />
             <Button icon={<ReloadOutlined />} onClick={() => setProcess(process)} />
           </Space>
+
+          <Alert
+            type="info"
+            message={
+              <Space wrap>
+                <span>
+                  Или загрузите <b>все формы {process ? 'процесса' : 'всех процессов'}</b> сразу
+                  {forms.length ? ` (${forms.length} шт.)` : ''}
+                </span>
+                <Tooltip title="Уже импортированные формы будут пропущены — правки в них не затираются">
+                  <Button
+                    type="primary" ghost icon={<CloudDownloadOutlined />}
+                    loading={syncing} disabled={!forms.length}
+                    onClick={doSync}
+                  >
+                    Загрузить все
+                  </Button>
+                </Tooltip>
+                <Checkbox checked={publishOnSync} onChange={(e) => setPublishOnSync(e.target.checked)}>
+                  <Tooltip title="Опубликованная форма сразу заменяет форму Оператона в задачах. Без галочки формы приедут черновиками — их можно проверить и опубликовать вручную.">
+                    сразу опубликовать
+                  </Tooltip>
+                </Checkbox>
+              </Space>
+            }
+          />
         </Space>
       ) : (
         <Upload.Dragger accept=".form,.json" showUploadList={false} beforeUpload={onFile}>
@@ -167,6 +218,48 @@ export default function OperatonImportModal({
 
       {loading && <div style={{ textAlign: 'center', padding: 24 }}><Spin /></div>}
       {error && <Alert type="error" showIcon style={{ marginTop: 16 }} message={error} />}
+
+      {syncResult && (
+        <>
+          <Divider />
+          <Alert
+            style={{ marginBottom: 12 }}
+            type={syncResult.failed ? 'warning' : 'success'}
+            showIcon
+            message={
+              syncResult.message
+                ? syncResult.message
+                : `Импортировано: ${syncResult.imported} · пропущено: ${syncResult.skipped} · с ошибкой: ${syncResult.failed}`
+            }
+          />
+          <List
+            size="small"
+            bordered
+            style={{ maxHeight: 300, overflow: 'auto' }}
+            dataSource={syncResult.items}
+            renderItem={(it) => (
+              <List.Item
+                actions={it.id ? [<a key="o" onClick={() => onImported(it.id!)}>открыть</a>] : []}
+              >
+                <Space direction="vertical" size={0} style={{ width: '100%' }}>
+                  <Space wrap size={6}>
+                    {it.status === 'imported' && <Tag color="green">импортирована</Tag>}
+                    {it.status === 'skipped' && <Tag>пропущена</Tag>}
+                    {it.status === 'failed' && <Tag color="red">ошибка</Tag>}
+                    <b>{it.title || it.form_id || it.operaton_form_id}</b>
+                    {it.published ? <Tag color="blue">опубликована</Tag> : null}
+                    {it.warnings ? <Tag color="orange">{it.warnings} замечаний</Tag> : null}
+                    {it.unsupported ? <Tag color="red">{it.unsupported} не перенесено</Tag> : null}
+                  </Space>
+                  <Typography.Text type="secondary" style={{ fontSize: 12, fontFamily: 'monospace' }}>
+                    {it.operaton_form_id}{it.detail ? ` — ${it.detail}` : ''}
+                  </Typography.Text>
+                </Space>
+              </List.Item>
+            )}
+          />
+        </>
+      )}
 
       {preview && report && (
         <>
@@ -232,7 +325,6 @@ export default function OperatonImportModal({
             <FormRenderer
               schema={{ fields: preview.fields, grid_columns: preview.grid_columns, submit: {}, title: '' }}
               dictionaries={[]}
-              showTitle={false}
             />
           </div>
         </>

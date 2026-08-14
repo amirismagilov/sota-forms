@@ -7,6 +7,7 @@ asserts on how an unreachable engine is reported.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -263,3 +264,175 @@ async def test_local_form_has_no_key_map(client):
     body = (await client.get("/api/public/forms/order_form")).json()
     assert body["source"] == "local"
     assert body["key_map"] == {}
+
+
+# ------------------------------------------------------- bulk sync (catalogue)
+
+
+@pytest.fixture
+def catalogue(monkeypatch):
+    """Stand in for the sota-bpmn catalogue — no network in tests."""
+    from app import bpmn_client
+
+    names = {
+        "form_obrashchenieKlienta_klassifikaciya": "Классификация обращения",
+        "form_obrashchenieKlienta_pervayaLiniya": "Первая линия",
+    }
+    state = {"broken": set()}
+
+    async def _list_forms(process_key=None):
+        return [
+            {"id": fid, "name": name, "processKey": "obrashchenieKlienta"}
+            for fid, name in names.items()
+        ]
+
+    async def _get_form(form_id: str):
+        if form_id in state["broken"]:
+            return {"id": form_id, "processKey": "obrashchenieKlienta", "schema": {"nope": 1}}
+        return {"id": form_id, "processKey": "obrashchenieKlienta", "schema": _schema(form_id)}
+
+    monkeypatch.setattr(bpmn_client, "list_forms", _list_forms)
+    monkeypatch.setattr(bpmn_client, "get_form", _get_form)
+    return state
+
+
+async def test_sync_pulls_every_form_of_the_process(client, catalogue):
+    r = await client.post("/api/operaton/sync", json={"process_key": "obrashchenieKlienta"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["imported"] == 2 and body["skipped"] == 0 and body["failed"] == 0
+
+    listed = (await client.get("/api/forms", params={"source": "operaton"})).json()
+    assert listed["total"] == 2
+    # Titles come from the catalogue (BPMN userTask labels), not from the technical id.
+    assert {i["title"] for i in listed["items"]} == {"Классификация обращения", "Первая линия"}
+    # Draft by default — a bulk pull must not silently take over live tasks.
+    assert all(i["status"] == "draft" for i in listed["items"])
+
+
+async def test_sync_is_idempotent_and_never_overwrites(client, catalogue):
+    await client.post("/api/operaton/sync", json={"process_key": "obrashchenieKlienta"})
+    # Edit one of them, then sync again: the edit must survive.
+    listed = (await client.get("/api/forms", params={"source": "operaton"})).json()["items"]
+    target = listed[0]
+    full = (await client.get(f"/api/forms/{target['id']}")).json()
+    await client.put(f"/api/forms/{target['id']}", json={
+        "form_id": full["form_id"], "title": "Моё название",
+        "grid_columns": full["grid_columns"], "fields": full["fields"], "submit": full["submit"],
+    })
+
+    again = (await client.post("/api/operaton/sync", json={"process_key": "obrashchenieKlienta"})).json()
+    assert again["imported"] == 0 and again["skipped"] == 2
+
+    after = (await client.get(f"/api/forms/{target['id']}")).json()
+    assert after["title"] == "Моё название", "re-sync must not discard edits"
+
+
+async def test_one_broken_schema_does_not_block_the_rest(client, catalogue):
+    catalogue["broken"].add("form_obrashchenieKlienta_pervayaLiniya")
+
+    body = (await client.post("/api/operaton/sync", json={})).json()
+    assert body["imported"] == 1 and body["failed"] == 1
+
+    failed = next(i for i in body["items"] if i["status"] == "failed")
+    assert failed["operaton_form_id"] == "form_obrashchenieKlienta_pervayaLiniya"
+    assert "Оператона" in failed["detail"]
+    # The healthy one is really in the registry, not rolled back with its neighbour.
+    assert (await client.get("/api/forms", params={"source": "operaton"})).json()["total"] == 1
+
+
+async def test_sync_can_publish_immediately(client, catalogue):
+    body = (await client.post("/api/operaton/sync", json={"publish": True})).json()
+    assert body["imported"] == 2
+    assert all(i["published"] for i in body["items"])
+
+    listed = (await client.get("/api/forms", params={"source": "operaton"})).json()["items"]
+    assert all(i["status"] == "published" and i["published_version"] == 1 for i in listed)
+
+    # Published means the host can now resolve them for a live task.
+    r = await client.get("/api/public/forms/by-operaton/form_obrashchenieKlienta_klassifikaciya")
+    assert r.status_code == 200
+
+
+async def test_sync_reports_an_empty_catalogue_instead_of_failing(client, monkeypatch):
+    from app import bpmn_client
+
+    async def _empty(process_key=None):
+        return []
+
+    monkeypatch.setattr(bpmn_client, "list_forms", _empty)
+    body = (await client.post("/api/operaton/sync", json={"process_key": "nope"})).json()
+    assert body["imported"] == 0
+    assert "нет форм" in body["message"]
+
+
+# ------------------------------------------------------------- auto-sync loop
+
+
+async def test_auto_sync_pass_imports_into_the_configured_account(client, catalogue, monkeypatch):
+    """One pass of the background poller does exactly what the button does."""
+    from app.config import get_settings
+    from app.worker import operaton_poller
+
+    monkeypatch.setenv("OPERATON_SYNC_ACCOUNT", "acc_demo")
+    get_settings.cache_clear()
+    try:
+        res = await operaton_poller.run_once()
+        assert res["imported"] == 2
+
+        listed = (await client.get("/api/forms", params={"source": "operaton"})).json()
+        assert listed["total"] == 2
+        # Traceable as machine-made, and still a draft — a timer reviews nothing.
+        full = (await client.get(f"/api/forms/{listed['items'][0]['id']}")).json()
+        assert full["source_meta"]["imported_by"] == "auto-sync"
+        assert full["status"] == "draft"
+    finally:
+        get_settings.cache_clear()
+
+
+async def test_auto_sync_pass_is_idempotent(client, catalogue, monkeypatch):
+    """Repeated passes must not pile up duplicates — this runs every N seconds."""
+    from app.config import get_settings
+    from app.worker import operaton_poller
+
+    monkeypatch.setenv("OPERATON_SYNC_ACCOUNT", "acc_demo")
+    get_settings.cache_clear()
+    try:
+        first = await operaton_poller.run_once()
+        second = await operaton_poller.run_once()
+        third = await operaton_poller.run_once()
+
+        assert first["imported"] == 2
+        assert second["imported"] == 0 and second["skipped"] == 2
+        assert third["imported"] == 0
+        assert (await client.get("/api/forms", params={"source": "operaton"})).json()["total"] == 2
+    finally:
+        get_settings.cache_clear()
+
+
+async def test_auto_sync_does_not_start_without_a_configured_bpmn(monkeypatch):
+    """Auto-sync on but no sota-bpmn configured → refuse to start, do not spin."""
+    from app.config import get_settings
+    from app.worker import operaton_poller
+
+    monkeypatch.setenv("OPERATON_AUTO_SYNC", "true")
+    monkeypatch.setenv("SOTA_BPMN_BASE", "")
+    get_settings.cache_clear()
+    try:
+        # Returns immediately instead of looping forever.
+        await asyncio.wait_for(operaton_poller.run(), timeout=5)
+    finally:
+        get_settings.cache_clear()
+
+
+async def test_auto_sync_is_off_by_default(monkeypatch):
+    from app.config import get_settings
+    from app.worker import operaton_poller
+
+    monkeypatch.delenv("OPERATON_AUTO_SYNC", raising=False)
+    get_settings.cache_clear()
+    try:
+        assert get_settings().operaton_auto_sync is False
+        await asyncio.wait_for(operaton_poller.run(), timeout=5)
+    finally:
+        get_settings.cache_clear()
