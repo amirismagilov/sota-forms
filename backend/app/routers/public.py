@@ -13,9 +13,9 @@ from ..deps import get_account_by_id
 from ..dict_resolver import resolve_api_dictionary
 from ..models import Dictionary, Form, FormVersion, Submission, WebhookDelivery
 from ..operaton import resolve_placeholders
-from ..suggest import resolve_suggest
 from ..ratelimit import check_rate_limit
 from ..schemas import PublicFormOut, SubmitIn
+from ..suggest import resolve_suggest
 
 router = APIRouter(prefix="/api/public", tags=["public"])
 
