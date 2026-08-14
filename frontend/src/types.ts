@@ -73,6 +73,8 @@ export interface Field {
   sameAs?: { target?: string; source?: string };
   // Visual grid placement (set by the layout editor). x/w in columns, y/h in rows.
   layout?: { x: number; y: number; w: number; h: number };
+  /** Шаг флоу, на котором показывается поле. Пусто = первый шаг («main»). */
+  step?: string;
 }
 
 // Auto-fill another form field from the selected suggestion's data.
@@ -170,6 +172,136 @@ export interface OperatonPreview {
   report: OperatonReport;
 }
 
+// ---- Флоу отправки: кнопка → запрос → разбор ответа → действие ----
+
+export interface SubmitButton {
+  text?: string;
+  loadingText?: string;
+  size?: 'small' | 'middle' | 'large';
+  block?: boolean;
+  align?: 'left' | 'center' | 'right';
+  danger?: boolean;
+}
+
+export type Transport = 'none' | 'webhook' | 'rest';
+
+export interface StepRequest {
+  transport?: Transport;
+  /** webhook: произвольный URL, поддерживает {{taskId}}, {{formId}}, {{submissionId}} */
+  webhookUrl?: string;
+  /** rest: через «Подключение» — секреты и whitelist остаются на бэкенде */
+  connectionId?: string;
+  endpoint?: string;
+  method?: 'POST' | 'PUT' | 'PATCH' | 'GET';
+  headers?: { name: string; value: string }[];
+  /** envelope — наш конверт, data — голое {"data": …}, custom — JSON-шаблон автора */
+  payload?: 'envelope' | 'data' | 'custom';
+  bodyTemplate?: string;
+  /** Отдавать ли сырой ответ в браузер (по умолчанию нет). */
+  exposeResponse?: boolean;
+  delivery?: 'sync' | 'async';
+  operatonComplete?: boolean;
+}
+
+export type ConditionSource = 'status' | 'body' | 'field' | 'error';
+export type RuleOperator =
+  | 'eq' | 'neq' | 'gt' | 'lt' | 'gte' | 'lte'
+  | 'in' | 'contains' | 'regex' | 'empty' | 'not_empty' | 'exists';
+
+export interface RuleCondition {
+  source: ConditionSource;
+  path?: string;
+  operator: RuleOperator;
+  value?: any;
+}
+
+export type OutcomeKind = 'message' | 'fields' | 'redirect' | 'none';
+
+export interface OutcomeAction {
+  kind: OutcomeKind;
+  // message
+  messageType?: 'success' | 'info' | 'warning' | 'error';
+  title?: string;
+  text?: string;
+  // fields — открыть следующий шаг и подставить в него значения из ответа
+  stepId?: string;
+  fill?: { fieldId: string; from: string }[];
+  // redirect
+  url?: string;
+  newTab?: boolean;
+  delayMs?: number;
+}
+
+export interface ResponseRule {
+  id: string;
+  name?: string;
+  match?: 'all' | 'any';
+  when: RuleCondition[];
+  then: OutcomeAction;
+}
+
+export interface FlowStep {
+  id: string;
+  title?: string;
+  description?: string;
+  button?: SubmitButton;
+  request?: StepRequest;
+  rules?: ResponseRule[];
+  /** Только в ответе бэкенда (`GET /forms/:pk/flow`). */
+  fieldIds?: string[];
+}
+
+/** Исход шага, уже посчитанный бэкендом: виджету остаётся его исполнить. */
+export interface ResolvedOutcome {
+  kind: OutcomeKind;
+  messageType?: 'success' | 'info' | 'warning' | 'error';
+  title?: string;
+  text?: string;
+  stepId?: string;
+  stepTitle?: string;
+  stepDescription?: string;
+  fieldIds?: string[];
+  button?: SubmitButton;
+  values?: Record<string, any>;
+  url?: string;
+  newTab?: boolean;
+  delayMs?: number;
+  response?: { status?: number | null; body?: any };
+}
+
+export interface SubmitResult {
+  ok?: boolean;
+  submissionId?: string;
+  flowToken?: string;
+  step?: string;
+  outcome?: ResolvedOutcome;
+  matchedRule?: string | null;
+  successMessage?: string | null;
+  redirectUrl?: string | null;
+}
+
+export interface FlowTestResult {
+  matchedRuleId?: string | null;
+  matchedRuleName?: string | null;
+  trace: { id: string; name: string; matched: boolean }[];
+  outcome: ResolvedOutcome & { stepExists?: boolean };
+}
+
+export interface SubmitConfig {
+  /** Шаги флоу. Первый всегда «main»; отсутствует — старая одношаговая форма. */
+  steps?: FlowStep[];
+  // Legacy (одиночный вебхук). Бэкенд мигрирует это в шаг «main» на лету.
+  webhookUrl?: string;
+  successMessage?: string;
+  redirectUrl?: string | null;
+  // Operaton task completion: sync delivery, bare {"data": …} body and a
+  // server-injected shared secret.
+  delivery?: 'sync' | 'async';
+  payload?: 'envelope' | 'data';
+  operatonComplete?: boolean;
+  operatonProcessKey?: string;
+}
+
 export interface FormSchema {
   id?: string;
   form_id: string;
@@ -177,17 +309,7 @@ export interface FormSchema {
   version?: number;
   grid_columns: number;
   fields: Field[];
-  submit: {
-    webhookUrl?: string;
-    successMessage?: string;
-    redirectUrl?: string | null;
-    // Operaton task completion: sync delivery, bare {"data": …} body and a
-    // server-injected shared secret.
-    delivery?: 'sync' | 'async';
-    payload?: 'envelope' | 'data';
-    operatonComplete?: boolean;
-    operatonProcessKey?: string;
-  };
+  submit: SubmitConfig;
   source?: FormSource;
   source_meta?: OperatonMeta;
   status?: 'draft' | 'published' | 'archived';

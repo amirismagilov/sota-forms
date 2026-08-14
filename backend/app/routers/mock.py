@@ -81,3 +81,53 @@ async def ext_branches(region: str = ""):
 async def ext_branches_smart(region: str):
     """Smart-URL source: region encoded in the path instead of a param."""
     return {"items": _BRANCHES.get(region, [])}
+
+
+# --- Mock decision engine ----------------------------------------------------
+# Стенд для флоу «заявка → система принятия решения → добор полей / отказ».
+# Решение детерминировано (зависит только от суммы и дохода), поэтому демо и
+# тесты воспроизводимы, а не «как повезёт».
+
+
+@router.post("/ext/decision")
+async def ext_decision(body: dict):
+    """Скоринг заявки: approved / manual / declined.
+
+    - доход не указан или сумма больше 12 доходов → declined;
+    - сумма больше 500 000 → manual (нужны доп. документы);
+    - иначе approved с лимитом, кратным 10 000.
+    """
+    data = (body or {}).get("data") or body or {}
+
+    def _num(key: str) -> float:
+        try:
+            return float(str(data.get(key, "") or 0).replace(" ", "").replace(",", "."))
+        except (TypeError, ValueError):
+            return 0.0
+
+    amount = _num("amount") or _num("f_amount")
+    income = _num("income") or _num("f_income")
+    request_id = "REQ-" + str(abs(hash((amount, income))) % 900000 + 100000)
+
+    if income <= 0 or amount > income * 12:
+        return {
+            "requestId": request_id,
+            "decision": "declined",
+            "reason": "Запрошенная сумма несопоставима с подтверждённым доходом",
+        }
+    if amount > 500000:
+        return {
+            "requestId": request_id,
+            "decision": "manual",
+            "approvedLimit": 500000,
+            "reason": "Нужны дополнительные документы",
+            "requiredDocs": ["Справка о доходах", "Копия трудовой книжки"],
+        }
+    limit = min(amount, round(income * 10 / 10000) * 10000)
+    return {
+        "requestId": request_id,
+        "decision": "approved",
+        "approvedLimit": limit,
+        "rate": 17.9,
+        "offerValidDays": 5,
+    }

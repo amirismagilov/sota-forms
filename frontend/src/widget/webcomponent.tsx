@@ -125,20 +125,40 @@ class NoCodeForm extends HTMLElement {
     if (pc) token.colorPrimary = pc;
     if (br) token.borderRadius = Number(br);
 
-    const onSubmit = async (payload: Record<string, any>) => {
+    const onSubmit = async (
+      payload: Record<string, any>,
+      step: string,
+      continuation: { submissionId?: string; flowToken?: string },
+    ) => {
       const context = this.context();
-      this.emit('form:submit', { data: payload, context, webhookUrl: data.submit?.webhookUrl });
+      this.emit('form:submit', { data: payload, context, step });
       try {
-        const res = (await axios.post(`${api}/public/forms/${formId}/submit`, { data: payload, context })).data;
-        this.emit('form:completed', { data: payload, context, submissionId: res.submissionId });
+        const res = (
+          await axios.post(`${api}/public/forms/${formId}/submit`, {
+            data: payload,
+            context,
+            step,
+            // Продолжение многошагового флоу: без подписи бэкенд заведёт новое
+            // заполнение вместо дописывания в текущее.
+            submissionId: continuation?.submissionId,
+            flowToken: continuation?.flowToken,
+          })
+        ).data;
+        this.emit('form:completed', {
+          data: payload, context, step, submissionId: res.submissionId, outcome: res.outcome,
+        });
         return res;
       } catch (e: any) {
-        // Synchronous delivery (Operaton task completion) reports engine
-        // failures here — surface them instead of showing a success message.
+        // Synchronous delivery (Operaton task completion, REST decision engines)
+        // reports failures here — surface them instead of showing a success message.
         const detail = e?.response?.data?.detail || 'Не удалось отправить форму';
-        this.emit('form:error', { error: 'submit_failed', detail, context });
+        this.emit('form:error', { error: 'submit_failed', detail, context, step });
         throw new Error(detail);
       }
+    };
+    const onOutcome = (outcome: any, step: string) => {
+      this.emit('form:outcome', { outcome, step });
+      if (outcome?.kind === 'fields') this.emit('form:step', { step: outcome.stepId, from: step });
     };
     const onChange = (field: string, value: any, all: Record<string, any>) => {
       this.values = all;
@@ -174,6 +194,7 @@ class NoCodeForm extends HTMLElement {
         onSubmit={onSubmit}
         onChange={onChange}
         onError={onError}
+        onOutcome={onOutcome}
         apiDictLoader={apiDictLoader}
         suggestLoader={suggestLoader}
         fileUpload={fileUpload}

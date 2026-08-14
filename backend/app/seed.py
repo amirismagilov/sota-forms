@@ -222,5 +222,153 @@ async def seed_if_empty() -> None:
             form_pk="form_demo", version=1, title="Оформление заказа",
             grid_columns=2, fields=fields, submit=submit_cfg, note="Первая публикация",
         ))
+
+        _seed_credit_flow(db)
         await db.commit()
-        print("[seed] demo account, dictionaries and published order_form created", flush=True)
+        print("[seed] demo account, dictionaries, order_form and credit_application created", flush=True)
+
+
+def _seed_credit_flow(db) -> None:
+    """Форма-эталон многошагового флоу: заявка → решение → добор полей / отказ.
+
+    Работает из коробки против встроенного мока системы принятия решения, так
+    что «как это настраивается» можно не читать, а открыть и посмотреть.
+    """
+    decision_conn = Connection(
+        id="conn_decision",
+        account_id=DEMO_ACCOUNT_ID,
+        name="Система принятия решения (mock)",
+        base_url=MOCK_EXT_BASE,
+        auth_type="none",
+        auth_config={},
+        whitelist=["^/decision$"],
+    )
+
+    fields = [
+        # --- Шаг 1: заявка -------------------------------------------------
+        {"id": "h_app", "type": "section_header", "label": "Заявка на кредит", "step": "main"},
+        {"id": "fio", "type": "text", "label": "ФИО", "gridSpan": 2, "required": True, "step": "main"},
+        {"id": "phone", "type": "phone", "label": "Телефон", "gridSpan": 1, "required": True, "step": "main",
+         "mask": {"preset": "phone", "regex": r"^\+7 \(\d{3}\) \d{3}-\d{2}-\d{2}$"}},
+        {"id": "birth_date", "type": "date", "label": "Дата рождения", "gridSpan": 1, "required": True, "step": "main"},
+        {"id": "amount", "type": "amount", "label": "Запрашиваемая сумма, ₽", "gridSpan": 1, "required": True,
+         "step": "main", "validation": {"min": 10000, "max": 5000000}},
+        {"id": "income", "type": "amount", "label": "Ежемесячный доход, ₽", "gridSpan": 1, "required": True,
+         "step": "main", "validation": {"min": 0}},
+
+        # --- Шаг 2: добор данных после одобрения ---------------------------
+        {"id": "h_approved", "type": "section_header", "label": "Осталось немного", "step": "approved"},
+        {"id": "approved_limit", "type": "amount", "label": "Одобренная сумма, ₽", "gridSpan": 2,
+         "step": "approved", "readOnly": True,
+         "hint": "Подставлено из ответа системы принятия решения"},
+        {"id": "passport", "type": "passport", "label": "Паспорт (серия и номер)", "gridSpan": 1,
+         "required": True, "step": "approved"},
+        {"id": "employer", "type": "text", "label": "Место работы", "gridSpan": 1, "required": True, "step": "approved"},
+        {"id": "card_number", "type": "card", "label": "Карта для зачисления", "gridSpan": 2,
+         "required": True, "step": "approved"},
+    ]
+
+    submit_cfg = {
+        "steps": [
+            {
+                "id": "main",
+                "title": "Заявка",
+                "button": {"text": "Узнать решение", "size": "large", "block": True},
+                "request": {
+                    "transport": "rest",
+                    "connectionId": "conn_decision",
+                    "endpoint": "/decision",
+                    "method": "POST",
+                    "payload": "data",
+                    "exposeResponse": False,
+                },
+                "rules": [
+                    {
+                        "id": "declined",
+                        "name": "Отказ",
+                        "when": [{"source": "body", "path": "decision", "operator": "eq", "value": "declined"}],
+                        "then": {
+                            "kind": "message",
+                            "messageType": "error",
+                            "title": "К сожалению, отказ",
+                            "text": "{{resp.reason}}. Заявка №{{resp.requestId}}.",
+                        },
+                    },
+                    {
+                        "id": "manual",
+                        "name": "Ручная проверка",
+                        "when": [{"source": "body", "path": "decision", "operator": "eq", "value": "manual"}],
+                        "then": {
+                            "kind": "message",
+                            "messageType": "warning",
+                            "title": "Заявка ушла на проверку",
+                            "text": "Нужны документы: {{resp.requiredDocs}}. Мы позвоним по номеру {{phone}}.",
+                        },
+                    },
+                    {
+                        "id": "approved",
+                        "name": "Одобрено → добрать данные",
+                        "when": [{"source": "body", "path": "decision", "operator": "eq", "value": "approved"}],
+                        "then": {
+                            "kind": "fields",
+                            "stepId": "approved",
+                            "fill": [{"fieldId": "approved_limit", "from": "resp.approvedLimit"}],
+                        },
+                    },
+                    {
+                        "id": "unavailable",
+                        "name": "Скоринг недоступен",
+                        "when": [{"source": "error", "operator": "not_empty"}],
+                        "then": {
+                            "kind": "message",
+                            "messageType": "warning",
+                            "title": "Решение пока недоступно",
+                            "text": "Мы приняли заявку и вернёмся с решением позже.",
+                        },
+                    },
+                ],
+            },
+            {
+                "id": "approved",
+                "title": "Оформление",
+                "description": "Кредит одобрен — заполните данные для зачисления.",
+                "button": {"text": "Оформить кредит", "size": "large", "block": True},
+                "request": {"transport": "webhook", "webhookUrl": MOCK_WEBHOOK, "delivery": "async"},
+                "rules": [
+                    {
+                        "id": "done",
+                        "name": "Готово",
+                        "when": [],
+                        "then": {
+                            "kind": "message",
+                            "messageType": "success",
+                            "title": "Кредит оформлен",
+                            "text": "Деньги поступят на карту в течение дня.",
+                        },
+                    },
+                ],
+            },
+        ],
+    }
+
+    credit = Form(
+        id="form_credit",
+        account_id=DEMO_ACCOUNT_ID,
+        form_id="credit_application",
+        title="Заявка на кредит",
+        grid_columns=2,
+        fields=fields,
+        submit=submit_cfg,
+        status="published",
+        version=1,
+        published_version=1,
+        has_draft_changes=False,
+    )
+    db.add_all([
+        decision_conn,
+        credit,
+        FormVersion(
+            form_pk="form_credit", version=1, title="Заявка на кредит",
+            grid_columns=2, fields=fields, submit=submit_cfg, note="Первая публикация",
+        ),
+    ])

@@ -1,5 +1,6 @@
 import {
   AppstoreOutlined,
+  BranchesOutlined,
   CloudUploadOutlined,
   CopyOutlined,
   DeleteOutlined,
@@ -35,9 +36,11 @@ import {
   publishForm, rollbackForm, updateForm, uploadFile,
 } from '../api';
 import { extractRefs } from '../renderer/engine';
+import { flowSteps, MAIN_STEP } from '../renderer/flow';
 import type { Connection, Dictionary, Field, FormSchema, FormVersionInfo } from '../types';
 import ThemedForm from '../widget/ThemedForm';
 import { FIELD_TYPE_GROUPS, MASK_PRESETS, OPERATORS } from './fieldTypes';
+import FlowEditor from './FlowEditor';
 import LayoutEditor, { ensureLayout } from './LayoutEditor';
 
 const LAYOUT_TYPES = ['section_header', 'divider', 'info_text'];
@@ -63,8 +66,9 @@ export default function FormEditor() {
   const [highlight, setHighlight] = useState<string | null>(null);
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [versions, setVersions] = useState<FormVersionInfo[]>([]);
-  const [leftView, setLeftView] = useState<'fields' | 'layout'>('fields');
+  const [leftView, setLeftView] = useState<'fields' | 'layout' | 'flow'>('fields');
   const [suggestTest, setSuggestTest] = useState<any>(null);
+  const [previewStep, setPreviewStep] = useState<string>(MAIN_STEP);
 
   useEffect(() => {
     if (!pk) return;
@@ -82,6 +86,13 @@ export default function FormEditor() {
   // field's position didn't match editIndex, letting a field reference itself).
   const currentFieldId = editIndex !== null ? form.fields[editIndex]?.id : null;
   const otherFields = form.fields.filter((f) => f.id !== currentFieldId);
+  // Шаги флоу нужны и списку полей (бейдж «на каком шаге»), и предпросмотру.
+  const steps = flowSteps(form.submit);
+  const stepLabel = (id: string) => {
+    const i = steps.findIndex((s) => s.id === id);
+    if (i < 0) return id;
+    return steps[i].title || (i === 0 ? 'Шаг 1' : steps[i].id);
+  };
 
   // Fields imported from Operaton ARE process variables: a gateway downstream
   // reads them by name. Renaming one only fails at runtime, long after the edit,
@@ -264,21 +275,33 @@ export default function FormEditor() {
               // Leaving layout → reorder the field array to match the arrangement
               // (top→bottom, left→right), so the «Поля» list matches the preview.
               if (v === 'fields') setForm({ ...form, fields: sortByLayout(form.fields) });
-              setLeftView(v as 'fields' | 'layout');
+              setLeftView(v as 'fields' | 'layout' | 'flow');
             }}
             options={[
               { label: 'Поля', value: 'fields', icon: <UnorderedListOutlined /> },
-              { label: 'Раскладка (drag & resize)', value: 'layout', icon: <AppstoreOutlined /> },
+              { label: 'Раскладка', value: 'layout', icon: <AppstoreOutlined /> },
+              { label: 'Флоу отправки', value: 'flow', icon: <BranchesOutlined /> },
             ]}
           />
 
-          {leftView === 'fields' ? (
+          {leftView === 'flow' ? (
+            <FlowEditor
+              submit={form.submit || {}}
+              fields={form.fields}
+              connections={conns}
+              formPk={pk!}
+              previewStep={previewStep}
+              onPreviewStep={setPreviewStep}
+              onChange={(submit) => setForm({ ...form, submit })}
+            />
+          ) : leftView === 'fields' ? (
             <>
               <div>
                 {form.fields.map((f, i) => (
                   <FieldRow
                     key={f.id}
                     field={f}
+                    stepName={steps.length > 1 ? stepLabel(f.step || MAIN_STEP) : null}
                     highlight={highlight === f.id}
                     onEdit={() => openEditor(i)}
                     onDelete={() => removeField(i)}
@@ -305,27 +328,42 @@ export default function FormEditor() {
             </>
           )}
 
-          <Card size="small" title="Отправка (webhook)" style={{ marginTop: 16 }}>
-            <AntForm layout="vertical">
-              <AntForm.Item label="Webhook URL">
-                <Input value={form.submit?.webhookUrl} placeholder="http://backend:8000/api/mock/webhook"
-                  onChange={(e) => setForm({ ...form, submit: { ...form.submit, webhookUrl: e.target.value } })} />
-              </AntForm.Item>
-              <AntForm.Item label="Сообщение об успехе">
-                <Input value={form.submit?.successMessage}
-                  onChange={(e) => setForm({ ...form, submit: { ...form.submit, successMessage: e.target.value } })} />
-              </AntForm.Item>
-            </AntForm>
-          </Card>
+          {leftView !== 'flow' && (
+            <Card size="small" style={{ marginTop: 16 }}>
+              <Space wrap>
+                <Typography.Text type="secondary">Отправка:</Typography.Text>
+                {steps.map((s, i) => (
+                  <Tag key={s.id} color={i === 0 ? 'blue' : 'purple'}>
+                    {i + 1}. {s.title || (i === 0 ? 'Первый шаг' : s.id)} → «{s.button?.text || 'Отправить'}»
+                  </Tag>
+                ))}
+                <Button size="small" type="link" icon={<BranchesOutlined />} onClick={() => setLeftView('flow')}>
+                  Настроить флоу
+                </Button>
+              </Space>
+            </Card>
+          )}
         </Card>
       </Col>
 
       <Col span={11}>
-        <Card title="Живой предпросмотр" styles={{ body: { maxHeight: '78vh', overflow: 'auto' } }}>
+        <Card
+          title="Живой предпросмотр"
+          extra={steps.length > 1 ? (
+            <Segmented
+              size="small"
+              value={previewStep}
+              onChange={(v) => setPreviewStep(String(v))}
+              options={steps.map((s, i) => ({ label: s.title || (i === 0 ? 'Шаг 1' : s.id), value: s.id }))}
+            />
+          ) : undefined}
+          styles={{ body: { maxHeight: '78vh', overflow: 'auto' } }}
+        >
           <ThemedForm
             schema={{ fields: form.fields, grid_columns: form.grid_columns, submit: form.submit, title: form.title }}
             dictionaries={dicts}
             tokens={{ token: tokens }}
+            previewStep={previewStep}
             apiDictLoader={getDictOptions}
             suggestLoader={(field, query, values) =>
               probeSuggest({ suggest: field.suggest, query, values }).then((r) => r.items || [])}
@@ -370,6 +408,20 @@ export default function FormEditor() {
           >
             <Input disabled={isBoundField} />
           </AntForm.Item>
+
+          {steps.length > 1 && (
+            <AntForm.Item
+              name="step"
+              label="Шаг флоу"
+              initialValue={MAIN_STEP}
+              tooltip="На каком экране показывать поле. Поля следующих шагов не видны и не проверяются, пока флоу до них не дойдёт."
+            >
+              <Select options={steps.map((s, i) => ({
+                label: `${i + 1}. ${s.title || (i === 0 ? 'Первый шаг' : s.id)}`,
+                value: s.id,
+              }))} />
+            </AntForm.Item>
+          )}
 
           {!LAYOUT_TYPES.includes(editType) && (
             <>
@@ -662,7 +714,7 @@ export default function FormEditor() {
 }
 
 // ---- Field row with dependency badges ----
-function FieldRow({ field, highlight, onEdit, onDelete, onBadgeClick, onCopyId }: any) {
+function FieldRow({ field, stepName, highlight, onEdit, onDelete, onBadgeClick, onCopyId }: any) {
   const f: Field = field;
   const isLayout = LAYOUT_TYPES.includes(f.type);
   const badges: React.ReactNode[] = [];
@@ -689,6 +741,7 @@ function FieldRow({ field, highlight, onEdit, onDelete, onBadgeClick, onCopyId }
             <Typography.Text strong={!isLayout} type={isLayout ? 'secondary' : undefined}>{f.label || '(без названия)'}</Typography.Text>
             <Tag>{f.type}</Tag>
             <Tag style={{ cursor: 'pointer', fontFamily: 'monospace' }} onClick={onCopyId} icon={<CopyOutlined />}>{f.id}</Tag>
+            {stepName && <Tag color="purple" icon={<BranchesOutlined />}>{stepName}</Tag>}
             {f.required && <Tag color="red">*</Tag>}
             {badges}
           </Space>
@@ -770,6 +823,7 @@ function sortByLayout(fields: Field[]): Field[] {
 function fieldToForm(f: Field): any {
   return {
     ...f,
+    step: f.step || MAIN_STEP,
     gridSpan: f.gridSpan || 1,
     dictDisplay: f.dictDisplay || 'select',
     visibleIf: f.visibleIf || {},

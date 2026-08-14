@@ -6,8 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import current_claims, require_account
 from ..db import get_db
+from ..flow import MAIN_STEP, build_context, get_step, normalize_flow, rule_matches, run_rules, step_field_ids
 from ..models import Form, FormVersion, Submission
-from ..schemas import FormIn, FormOut
+from ..schemas import FlowTestIn, FormIn, FormOut
 
 router = APIRouter(prefix="/api/forms", tags=["forms"])
 
@@ -280,6 +281,65 @@ async def import_form(body: dict, db: AsyncSession = Depends(get_db), aid: str =
     await db.commit()
     await db.refresh(f)
     return _out(f)
+
+
+@router.get("/{form_pk}/flow")
+async def get_flow(form_pk: str, db: AsyncSession = Depends(get_db), aid: str = Depends(require_account)):
+    """Нормализованный флоу черновика: то, что реально исполнится на submit.
+
+    Конструктор показывает именно его, а не сырой `submit` — иначе автор старой
+    формы видел бы пустые настройки там, где на деле работает legacy-вебхук.
+    """
+    f = await _owned(db, form_pk, aid)
+    flow = normalize_flow(f.submit or {})
+    for s in flow["steps"]:
+        s["fieldIds"] = step_field_ids(f.fields or [], s["id"])
+    return flow
+
+
+@router.post("/{form_pk}/flow/test")
+async def test_flow(
+    form_pk: str,
+    body: FlowTestIn,
+    db: AsyncSession = Depends(get_db),
+    aid: str = Depends(require_account),
+):
+    """Прогнать правила шага по образцу ответа: какое сработает и что покажется.
+
+    Тот же движок, что и в рантайме (`flow.run_rules`), — «зелёный» тест здесь
+    означает то же поведение на бою, а не поведение отдельной тестовой копии.
+    """
+    f = await _owned(db, form_pk, aid)
+    flow = normalize_flow(f.submit or {})
+    step = get_step(flow, body.step or MAIN_STEP)
+    if step is None:
+        raise HTTPException(404, f"шаг '{body.step}' не найден")
+
+    ctx = build_context(
+        data=body.data,
+        status=body.status,
+        response=body.response if body.response is not None else {},
+        error=body.error,
+        submission_id="sub_test",
+        extra={"formId": f.form_id, "step": step["id"]},
+    )
+    outcome, matched = run_rules(step, ctx)
+    if outcome.get("kind") == "fields":
+        target = get_step(flow, outcome.get("stepId"))
+        outcome["stepTitle"] = (target or {}).get("title") or ""
+        outcome["fieldIds"] = step_field_ids(f.fields or [], outcome.get("stepId") or "")
+        outcome["stepExists"] = target is not None
+    return {
+        "matchedRuleId": (matched or {}).get("id"),
+        "matchedRuleName": (matched or {}).get("name"),
+        # Видно не только победителя, но и почему проиграли остальные, — без
+        # этого отладка правила превращается в гадание.
+        "trace": [
+            {"id": r["id"], "name": r.get("name") or "", "matched": rule_matches(r, ctx)}
+            for r in step.get("rules") or []
+        ],
+        "outcome": outcome,
+    }
 
 
 @router.get("/{form_pk}/export")
