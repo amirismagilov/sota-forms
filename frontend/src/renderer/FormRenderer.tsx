@@ -70,7 +70,6 @@ interface Props {
   onOutcome?: (outcome: ResolvedOutcome, stepId: string) => void;
   /** Показывать шаг принудительно — предпросмотр в конструкторе. */
   previewStep?: string;
-  showTitle?: boolean;
   apiDictLoader?: (dictId: string, values: Record<string, any>) => Promise<{ code: string; label: string; attrs?: any }[]>;
   suggestLoader?: (field: Field, query: string, values: Record<string, any>) => Promise<SuggestItem[]>;
   fileUpload?: (file: File) => Promise<{ id: string; url: string; filename: string; size: number }>;
@@ -80,7 +79,7 @@ type DictItem = { code: string; label: string; attrs?: any };
 type SuggestItem = { value: string; label: string; data: any };
 
 const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
-  { schema, dictionaries, initialValues, onSubmit, onChange, onError, onOutcome, previewStep, showTitle = true, apiDictLoader, suggestLoader, fileUpload },
+  { schema, dictionaries, initialValues, onSubmit, onChange, onError, onOutcome, previewStep, apiDictLoader, suggestLoader, fileUpload },
   ref,
 ) {
   const [values, setValues] = useState<Record<string, any>>({});
@@ -398,12 +397,14 @@ const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
 
   return (
     <div style={{ maxWidth, margin: '0 auto', padding: 8 }}>
-      {showTitle && <Title level={3}>{schema.title}</Title>}
-      {/* Заголовок и подпись шага показываются на КАЖДОМ экране, включая первый:
-          автор, который их заполнил, ожидает увидеть их в форме. Раньше первый
-          экран был исключением (считалось, что его роль играет заголовок формы),
-          но в конструкторе заголовок формы скрыт (showTitle=false), и текст
-          просто пропадал. Не нужен на первом экране — оставьте поля пустыми. */}
+      {/* Название формы (`schema.title`) на клиенте НЕ рендерится: это учётное
+          имя для списка форм и редактора, а не заголовок страницы. Нужен
+          заголовок в самой форме — его ставят полем «Заголовок секции», и он
+          один, вместо двух одинаковых строк подряд.
+
+          Заголовок и подпись шага показываются на КАЖДОМ экране, включая
+          первый: автор, который их заполнил, ожидает увидеть их в форме.
+          Не нужны на первом экране — оставьте поля пустыми. */}
       {(step.title || step.description) && (
         <div style={{ marginBottom: 12 }}>
           {step.title && <Title level={4} style={{ marginBottom: 4 }}>{step.title}</Title>}

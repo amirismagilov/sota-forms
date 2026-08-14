@@ -402,7 +402,6 @@ export default function FormEditor() {
             suggestLoader={(field, query, values) =>
               probeSuggest({ suggest: field.suggest, query, values }).then((r) => r.items || [])}
             fileUpload={uploadFile}
-            showTitle={false}
           />
         </Card>
       </Col>

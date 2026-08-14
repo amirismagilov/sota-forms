@@ -1,6 +1,6 @@
 import { ApiOutlined, DownloadOutlined, PlusOutlined, SearchOutlined, UploadOutlined } from '@ant-design/icons';
 import {
-  App, Badge, Button, Card, Empty, Form as AntForm, Input, Modal, Segmented, Space, Table, Tag, Tooltip, Upload,
+  Alert, App, Badge, Button, Card, Empty, Form as AntForm, Input, Modal, Segmented, Space, Table, Tag, Tooltip, Upload,
 } from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -26,16 +26,34 @@ export default function FormsList() {
   const [open, setOpen] = useState(false);
   const [operatonOpen, setOperatonOpen] = useState(false);
   const [form] = AntForm.useForm();
+  const [loading, setLoading] = useState(true);
+  // Неудачу запроса нельзя схлопывать в пустую таблицу. «Нет данных» и «список
+  // не загрузился» выглядели одинаково, и секундный 502 во время выката читался
+  // как «все формы удалены» — с ровно таким испугом это однажды и произошло.
+  const [loadError, setLoadError] = useState<string | null>(null);
   const pageSize = 10;
 
   const load = useCallback(() => {
+    setLoading(true);
+    setLoadError(null);
     listForms({
       q: q || undefined,
       status: status === 'all' ? undefined : status,
       source: source === 'all' ? undefined : source,
       limit: pageSize,
       offset: (page - 1) * pageSize,
-    }).then((r) => { setRows(r.items); setTotal(r.total); }).catch(() => setRows([]));
+    })
+      .then((r) => { setRows(r.items); setTotal(r.total); })
+      .catch((e) => {
+        setRows([]);
+        setTotal(0);
+        const code = e?.response?.status;
+        setLoadError(code === 401
+          ? 'Сессия истекла — войдите заново. Формы на месте, их просто некому показать.'
+          : `Не удалось загрузить список${code ? ` (HTTP ${code})` : ': нет связи с сервером'}. `
+            + 'Это сбой загрузки, а не потеря данных — формы на сервере.');
+      })
+      .finally(() => setLoading(false));
   }, [q, status, source, page]);
   useEffect(() => { load(); }, [load]);
 
@@ -186,20 +204,32 @@ export default function FormsList() {
           ]}
         />
       </Space>
+      {loadError && (
+        <Alert
+          type="error"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message={loadError}
+          action={<Button size="small" onClick={load}>Повторить</Button>}
+        />
+      )}
       <Table
         rowKey="id"
         dataSource={rows}
         columns={columns as any}
+        loading={loading}
         locale={{
-          emptyText: source === 'operaton'
-            ? (
-              <Empty description="Форм из Оператона пока нет">
-                <Button type="primary" icon={<ApiOutlined />} onClick={() => setOperatonOpen(true)}>
-                  Импортировать форму
-                </Button>
-              </Empty>
-            )
-            : undefined,
+          emptyText: loadError
+            ? <Empty description="Список не загрузился" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+            : source === 'operaton'
+              ? (
+                <Empty description="Форм из Оператона пока нет">
+                  <Button type="primary" icon={<ApiOutlined />} onClick={() => setOperatonOpen(true)}>
+                    Импортировать форму
+                  </Button>
+                </Empty>
+              )
+              : undefined,
         }}
         pagination={{ current: page, pageSize, total, onChange: setPage, showTotal: (t) => `Всего: ${t}` }}
       />

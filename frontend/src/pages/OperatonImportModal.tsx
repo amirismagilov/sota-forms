@@ -325,7 +325,6 @@ export default function OperatonImportModal({
             <FormRenderer
               schema={{ fields: preview.fields, grid_columns: preview.grid_columns, submit: {}, title: '' }}
               dictionaries={[]}
-              showTitle={false}
             />
           </div>
         </>
