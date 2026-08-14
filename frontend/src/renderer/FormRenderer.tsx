@@ -431,7 +431,6 @@ const FormRenderer = forwardRef<FormHandle, Props>(function FormRenderer(
         <Button
           type="primary"
           size={button.size}
-          danger={button.danger}
           block={button.block}
           onClick={handleSubmit}
           loading={submitting}

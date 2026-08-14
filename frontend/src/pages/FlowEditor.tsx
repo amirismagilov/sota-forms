@@ -260,10 +260,6 @@ function ButtonBlock({ value, onChange }: { value?: SubmitButton; onChange: (v: 
             options={[{ label: 'Слева', value: 'left' }, { label: 'По центру', value: 'center' }, { label: 'Справа', value: 'right' }]}
           />
         </span>
-        <span>
-          <Switch size="small" checked={!!v.danger} onChange={(danger) => patch({ danger })} />
-          <Text style={{ marginLeft: 8 }}>Красная (необратимое действие)</Text>
-        </span>
       </Space>
     </AntForm>
   );
